@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         RefreshDevices();
+        RestoreSelection();
         _timer.Tick += (_, _) => PollAudio();
         _timer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
@@ -31,6 +32,7 @@ public partial class MainWindow : Window
         {
             SystemEvents.SessionEnding -= OnSessionEnding;
             _timer.Stop();
+            StopTest();
             ReleaseDevices();
             _enumerator.Dispose();
         };
@@ -88,7 +90,7 @@ public partial class MainWindow : Window
         SyncInput();
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshDevices();
+    private void Refresh_Click(object sender, RoutedEventArgs e) { if (_testCapture is null) RefreshDevices(); }
 
     private void OutputDevices_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -175,7 +177,7 @@ public partial class MainWindow : Window
 
     private void PollAudio()
     {
-        if (_updating) return;
+        if (_updating || _testCapture is not null) return;
         try
         {
             MicMeter.Value = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue * 100;
@@ -192,5 +194,81 @@ public partial class MainWindow : Window
             }
         }
         catch (Exception ex) { MicMeter.Value = 0; Footer.Text = $"Diagnóstico: {ex.Message}"; }
+    }
+
+    private NAudio.Wave.WasapiCapture? _testCapture;
+    private NAudio.Wave.WaveFileWriter? _testWriter;
+    private NAudio.Wave.WaveOutEvent? _testPlayer;
+    private NAudio.Wave.AudioFileReader? _testReader;
+    private readonly string _testPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "zeus-" + Guid.NewGuid().ToString("N") + ".wav");
+    private readonly string _settingsPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZeusAudioControl", "devices.json");
+    private void Overview_Click(object sender, RoutedEventArgs e) => MainScroll.ScrollToTop();
+    private void Audio_Click(object sender, RoutedEventArgs e) => AudioHeading.BringIntoView();
+    private void Microphone_Click(object sender, RoutedEventArgs e) => MicHeading.BringIntoView();
+    private void Settings_Click(object sender, RoutedEventArgs e) => SettingsHeading.BringIntoView();
+    private void Save_Click(object sender, RoutedEventArgs e)
+    {
+        try {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_settingsPath)!);
+            System.IO.File.WriteAllText(_settingsPath, System.Text.Json.JsonSerializer.Serialize(new string?[] { _output?.ID, _input?.ID }));
+            Footer.Text = "Seleção salva neste computador.";
+        } catch (Exception ex) { Footer.Text = ex.Message; }
+    }
+    private void RestoreSelection()
+    {
+        try {
+            if (!System.IO.File.Exists(_settingsPath)) return;
+            var ids = System.Text.Json.JsonSerializer.Deserialize<string?[]>(System.IO.File.ReadAllText(_settingsPath));
+            if (ids is null || ids.Length != 2) return;
+            var output = OutputDevices.Items.OfType<MMDevice>().FirstOrDefault(d => d.ID == ids[0]);
+            var input = InputDevices.Items.OfType<MMDevice>().FirstOrDefault(d => d.ID == ids[1]);
+            if (output is not null) OutputDevices.SelectedItem = output;
+            if (input is not null) InputDevices.SelectedItem = input;
+        } catch (Exception ex) { Footer.Text = ex.Message; }
+    }
+    private async void Record_Click(object sender, RoutedEventArgs e)
+    {
+        if (_input is null || _testCapture is not null) return;
+        RecordButton.IsEnabled = PlayButton.IsEnabled = false;
+        _testPlayer?.Dispose(); _testPlayer = null;
+        _testReader?.Dispose(); _testReader = null;
+        try {
+            _testCapture = new NAudio.Wave.WasapiCapture(_input);
+            _testWriter = new NAudio.Wave.WaveFileWriter(_testPath, _testCapture.WaveFormat);
+            var done = new System.Threading.Tasks.TaskCompletionSource<Exception?>();
+            _testCapture.DataAvailable += (_, a) => _testWriter?.Write(a.Buffer, 0, a.BytesRecorded);
+            _testCapture.RecordingStopped += (_, a) => done.TrySetResult(a.Exception);
+            _testCapture.StartRecording();
+            TestStatus.Text = "Gravando localmente por 5 segundos...";
+            await System.Threading.Tasks.Task.WhenAny(done.Task, System.Threading.Tasks.Task.Delay(5000));
+            _testCapture?.StopRecording();
+            if (await System.Threading.Tasks.Task.WhenAny(done.Task, System.Threading.Tasks.Task.Delay(3000)) != done.Task) throw new TimeoutException("Tempo limite de gravação.");
+            if (await done.Task is Exception error) throw error;
+            _testCapture?.Dispose(); _testCapture = null;
+            _testWriter?.Dispose(); _testWriter = null;
+            PlayButton.IsEnabled = true;
+            TestStatus.Text = "Teste gravado. Ouça com volume baixo. Reprodução pela saída padrão do Windows.";
+        } catch (Exception ex) { StopTest(); TestStatus.Text = ex.Message; }
+        finally { RecordButton.IsEnabled = true; }
+    }
+    private void Play_Click(object sender, RoutedEventArgs e)
+    {
+        try {
+            _testPlayer?.Dispose(); _testReader?.Dispose();
+            _testReader = new NAudio.Wave.AudioFileReader(_testPath);
+            _testReader.Volume = 0.25f;
+            _testPlayer = new NAudio.Wave.WaveOutEvent();
+            _testPlayer.Init(_testReader);
+            _testPlayer.Play();
+        } catch (Exception ex) { TestStatus.Text = ex.Message; }
+    }
+    private void StopTest()
+    {
+        try { _testCapture?.StopRecording(); _testCapture?.Dispose(); } catch { }
+        _testCapture = null;
+        _testWriter?.Dispose(); _testWriter = null;
+        _testPlayer?.Dispose(); _testPlayer = null;
+        _testReader?.Dispose(); _testReader = null;
+        try { System.IO.File.Delete(_testPath); } catch { }
     }
 }
