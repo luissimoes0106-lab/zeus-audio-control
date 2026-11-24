@@ -196,7 +196,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { MicMeter.Value = 0; Footer.Text = $"Diagnóstico: {ex.Message}"; }
     }
 
-    private NAudio.Wave.WasapiCapture? _testCapture;
+    private NAudio.CoreAudioApi.WasapiCapture? _testCapture;
     private NAudio.Wave.WaveFileWriter? _testWriter;
     private NAudio.Wave.WaveOutEvent? _testPlayer;
     private NAudio.Wave.AudioFileReader? _testReader;
@@ -233,7 +233,7 @@ public partial class MainWindow : Window
         _testPlayer?.Dispose(); _testPlayer = null;
         _testReader?.Dispose(); _testReader = null;
         try {
-            _testCapture = new NAudio.Wave.WasapiCapture(_input);
+            _testCapture = new NAudio.CoreAudioApi.WasapiCapture(_input);
             _testWriter = new NAudio.Wave.WaveFileWriter(_testPath, _testCapture.WaveFormat);
             var done = new System.Threading.Tasks.TaskCompletionSource<Exception?>();
             _testCapture.DataAvailable += (_, a) => _testWriter?.Write(a.Buffer, 0, a.BytesRecorded);
