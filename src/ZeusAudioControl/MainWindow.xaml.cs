@@ -15,16 +15,22 @@ public partial class MainWindow : Window
     private MMDevice? _output;
     private MMDevice? _input;
     private bool _updating;
+    private readonly System.Windows.Threading.DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(150) };
+    private int _ticks;
+    private string _signature = "";
     private const string Model = "H510-PRO";
 
     public MainWindow()
     {
         InitializeComponent();
         RefreshDevices();
+        _timer.Tick += (_, _) => PollAudio();
+        _timer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
         Closed += (_, _) =>
         {
             SystemEvents.SessionEnding -= OnSessionEnding;
+            _timer.Stop();
             ReleaseDevices();
             _enumerator.Dispose();
         };
@@ -50,6 +56,8 @@ public partial class MainWindow : Window
         _updating = true;
         try
         {
+            var previousOutput = _output?.ID;
+            var previousInput = _input?.ID;
             OutputDevices.ItemsSource = null;
             InputDevices.ItemsSource = null;
             ReleaseDevices();
@@ -59,8 +67,9 @@ public partial class MainWindow : Window
             _ownedDevices.AddRange(capture);
             OutputDevices.ItemsSource = render;
             InputDevices.ItemsSource = capture;
-            OutputDevices.SelectedItem = render.FirstOrDefault(IsHeadset);
-            InputDevices.SelectedItem = capture.FirstOrDefault(IsHeadset);
+            _signature = string.Join("|", render.Concat(capture).Select(d => d.ID).OrderBy(id => id));
+            OutputDevices.SelectedItem = render.FirstOrDefault(d => d.ID == previousOutput) ?? render.FirstOrDefault(IsHeadset);
+            InputDevices.SelectedItem = capture.FirstOrDefault(d => d.ID == previousInput) ?? capture.FirstOrDefault(IsHeadset);
             var found = render.Any(IsHeadset) || capture.Any(IsHeadset);
             DeviceStatus.Text = found
                 ? "H510 Pro detectado nas interfaces de áudio do Windows."
@@ -118,8 +127,9 @@ public partial class MainWindow : Window
         try
         {
             _input = InputDevices.SelectedItem as MMDevice;
-            MicSlider.IsEnabled = _input is not null;
+            MicSlider.IsEnabled = MicMute.IsEnabled = _input is not null;
             if (_input is null) { MicLabel.Text = "Selecione um microfone"; return; }
+            MicMute.IsChecked = _input.AudioEndpointVolume.Mute;
             MicSlider.Value = _input.AudioEndpointVolume.MasterVolumeLevelScalar * 100;
             MicLabel.Text = $"{MicSlider.Value:0}%";
         }
@@ -154,5 +164,33 @@ public partial class MainWindow : Window
         if (_updating || _output is null) return;
         try { _output.AudioEndpointVolume.Mute = MuteToggle.IsChecked == true; }
         catch (Exception ex) { Footer.Text = $"Falha ao silenciar: {ex.Message}"; }
+    }
+
+    private void MicMute_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updating || _input is null) return;
+        try { _input.AudioEndpointVolume.Mute = MicMute.IsChecked == true; }
+        catch (Exception ex) { Footer.Text = $"Falha ao silenciar microfone: {ex.Message}"; }
+    }
+
+    private void PollAudio()
+    {
+        if (_updating) return;
+        try
+        {
+            MicMeter.Value = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue * 100;
+            if (++_ticks % 14 != 0) return;
+            var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
+            string signature;
+            try { signature = string.Join("|", devices.Select(d => d.ID).OrderBy(id => id)); }
+            finally { foreach (var d in devices) d.Dispose(); }
+            if (signature != _signature) RefreshDevices();
+            else
+            {
+                if (!VolumeSlider.IsMouseCaptureWithin) SyncOutput();
+                if (!MicSlider.IsMouseCaptureWithin) SyncInput();
+            }
+        }
+        catch (Exception ex) { MicMeter.Value = 0; Footer.Text = $"Diagnóstico: {ex.Message}"; }
     }
 }
