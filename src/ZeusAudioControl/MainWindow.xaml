@@ -3,32 +3,32 @@
     <Style TargetType="Button"><Setter Property="Background" Value="#D73939"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="15,9"/><Setter Property="Margin" Value="0,0,8,0"/></Style>
     <Style TargetType="TextBlock"><Setter Property="Margin" Value="0,0,0,8"/></Style>
   </Window.Resources>
-  <ScrollViewer VerticalScrollBarVisibility="Auto"><Grid Margin="30">
+  <DockPanel><Border DockPanel.Dock="Left" Width="180" Background="#191B23" Padding="16"><StackPanel><TextBlock Text="ZEUS / CONTROL" FontWeight="Bold" Foreground="#F04444" FontSize="16" Margin="0,0,0,30"/><Button Content="Visão geral" Click="Overview_Click" Margin="0,0,0,10"/><Button Content="Áudio" Click="Audio_Click" Margin="0,0,0,10"/><Button Content="Microfone" Click="Microphone_Click" Margin="0,0,0,10"/><Button Content="Configurações" Click="Settings_Click" Margin="0,0,0,10"/></StackPanel></Border><ScrollViewer Name="MainScroll" VerticalScrollBarVisibility="Auto"><Grid Margin="24">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel>
       <TextBlock Text="ZEUS AUDIO CONTROL" FontSize="27" FontWeight="Bold"/>
       <TextBlock Text="Redragon H510 Pro • aplicativo independente e não oficial" Foreground="#AFAFB5"/>
     </StackPanel>
-    <StackPanel Grid.Row="1" Margin="0,22,0,12">
+    <StackPanel Name="OverviewPanel" Grid.Row="1" Margin="0,22,0,12">
       <TextBlock Text="Dispositivo" FontSize="18" FontWeight="SemiBold"/>
       <TextBlock Name="DeviceStatus" Text="Procurando dispositivos..." TextWrapping="Wrap" Foreground="#E8B4B4"/>
       <Button Content="Atualizar dispositivos" HorizontalAlignment="Left" Click="Refresh_Click"/>
     </StackPanel>
     <Border Grid.Row="2" Background="#1D2029" CornerRadius="12" Padding="22">
       <StackPanel>
-        <TextBlock Text="Áudio de saída" FontSize="20" FontWeight="SemiBold"/>
+        <TextBlock Name="AudioHeading" Text="Áudio de saída" FontSize="20" FontWeight="SemiBold"/>
         <ComboBox Name="OutputDevices" Height="35" DisplayMemberPath="FriendlyName" SelectionChanged="OutputDevices_SelectionChanged"/>
         <TextBlock Text="Volume do headset" Margin="0,20,0,2"/>
         <Slider Name="VolumeSlider" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="VolumeSlider_ValueChanged"/>
         <TextBlock Name="VolumeLabel" Text="—"/>
         <CheckBox Foreground="White" Name="MuteToggle" Content="Silenciar saída" Checked="MuteToggle_Changed" Unchecked="MuteToggle_Changed" Margin="0,8,0,18"/>
-        <TextBlock Text="Microfone de entrada" FontSize="18" FontWeight="SemiBold"/>
+        <TextBlock Name="MicHeading" Text="Microfone de entrada" FontSize="18" FontWeight="SemiBold"/>
         <ComboBox Name="InputDevices" Height="35" DisplayMemberPath="FriendlyName" SelectionChanged="InputDevices_SelectionChanged"/>
         <TextBlock Text="Volume do microfone" Margin="0,15,0,2"/>
         <Slider Name="MicSlider" Minimum="0" Maximum="100" ValueChanged="MicSlider_ValueChanged"/>
         <TextBlock Name="MicLabel" Text="—"/><CheckBox Foreground="White" Name="MicMute" Content="Silenciar microfone" Checked="MicMute_Changed" Unchecked="MicMute_Changed" Margin="0,8,0,8"/><TextBlock Text="Intensidade do microfone"/><ProgressBar Name="MicMeter" Minimum="0" Maximum="100" Height="12" Foreground="#D73939"/>
-      </StackPanel>
+      <WrapPanel Margin="0,16,0,0"><Button Name="RecordButton" Content="Gravar teste (5 s)" Click="Record_Click"/><Button Name="PlayButton" Content="Ouvir teste" Click="Play_Click" IsEnabled="False"/></WrapPanel><TextBlock Name="TestStatus" TextWrapping="Wrap" Margin="0,8,0,0"/><TextBlock Name="SettingsHeading" Text="Configurações locais" FontSize="18" Margin="0,20,0,8"/><Button Content="Salvar seleção de dispositivos" Click="Save_Click" HorizontalAlignment="Left"/><TextBlock Text="Os efeitos DSP globais ainda não estão disponíveis." Foreground="#AFAFB5" TextWrapping="Wrap" Margin="0,12,0,0"/></StackPanel>
     </Border>
     <TextBlock Grid.Row="3" Name="Footer" Margin="0,14,0,0" Foreground="#AFAFB5" Text="Controles via Windows Core Audio. Sem alterações no driver ou firmware." TextWrapping="Wrap"/>
-  </Grid></ScrollViewer>
+  </Grid></ScrollViewer></DockPanel>
 </Window>
