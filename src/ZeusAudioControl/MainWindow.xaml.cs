@@ -220,15 +220,15 @@ public partial class MainWindow : Window
         SettingsPanel.Visibility = page == "Configurações" ? Visibility.Visible : Visibility.Collapsed;
         MainScroll.ScrollToTop();
     }
-    private sealed record StudioProfile(double Gain, bool Enabled, bool HighPass, bool Gate, double Threshold, bool Compressor, double Presence);
+    private sealed record StudioProfile(double Gain, bool Enabled, bool HighPass, bool Gate, double Threshold, bool Compressor, double Presence, double Noise = 0);
     private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
-    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value);
+    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value);
     private void ApplyStudio(StudioProfile p)
     {
         TestGain.Value = Math.Clamp(p.Gain, 0, 24); StudioEnabled.IsChecked = p.Enabled;
         HighPass.IsChecked = p.HighPass; GateEnabled.IsChecked = p.Gate;
         GateThreshold.Value = Math.Clamp(p.Threshold, -65, -20); CompressorEnabled.IsChecked = p.Compressor;
-        Presence.Value = Math.Clamp(p.Presence, -6, 6);
+        Presence.Value = Math.Clamp(p.Presence, -6, 6); NoiseReduction.Value = Math.Clamp(p.Noise, 0, 100);
     }
     private void Preset_Click(object sender, RoutedEventArgs e)
     {
@@ -306,7 +306,7 @@ public partial class MainWindow : Window
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
-            _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value)));
+            _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value)));
             _testPlayer.Play();
         } catch (Exception ex) { TestStatus.Text = ex.Message; }
     }
@@ -329,7 +329,9 @@ public partial class MainWindow : Window
         private readonly bool highPass;
         private readonly float[] envelope, gateGain;
         private int channel;
-        public TestGainProvider(NAudio.Wave.ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence)
+        private readonly float noiseStrength;
+        private readonly float[] noiseFloor, noiseGain;
+        public TestGainProvider(NAudio.Wave.ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise)
         {
             this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
             threshold = (float)Math.Pow(10, thresholdDb / 20);
@@ -337,6 +339,9 @@ public partial class MainWindow : Window
             attack = (float)Math.Exp(-1.0 / (rate * .005)); release = (float)Math.Exp(-1.0 / (rate * .15));
             hp = new NAudio.Dsp.BiQuadFilter[channels]; eq = new NAudio.Dsp.BiQuadFilter[channels];
             envelope = new float[channels]; gateGain = new float[channels];
+            noiseStrength = (float)Math.Clamp(noise / 100, 0, 1);
+            noiseFloor = new float[channels]; noiseGain = new float[channels];
+            Array.Fill(noiseFloor, .001f); Array.Fill(noiseGain, 1f);
             for (int i = 0; i < channels; i++) {
                 hp[i] = NAudio.Dsp.BiQuadFilter.HighPassFilter(rate, 80, .707f);
                 eq[i] = NAudio.Dsp.BiQuadFilter.PeakingEQ(rate, Math.Min(2500, rate / 4f), 1f, (float)presence);
@@ -354,6 +359,16 @@ public partial class MainWindow : Window
                     float level = Math.Abs(v);
                     float coeff = level > envelope[channel] ? attack : release;
                     envelope[channel] = coeff * envelope[channel] + (1-coeff)*level;
+                    if (noiseStrength > 0) {
+                        float env = envelope[channel];
+                        float floor = noiseFloor[channel];
+                        if (env < floor * 2 || env < .008f) floor += .0001f * (env - floor);
+                        noiseFloor[channel] = Math.Clamp(floor, .0001f, .02f);
+                        float ratio = Math.Clamp((env - noiseFloor[channel]) / Math.Max(env, .0001f), 0, 1);
+                        float targetNoise = 1 - noiseStrength * (1 - ratio * ratio);
+                        noiseGain[channel] = .995f * noiseGain[channel] + .005f * targetNoise;
+                        v *= noiseGain[channel];
+                    }
                     if (gate) {
                         float target = envelope[channel] >= threshold ? 1f : .03f;
                         float smooth = target > gateGain[channel] ? attack : release;
