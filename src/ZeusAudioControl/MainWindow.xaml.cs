@@ -271,7 +271,7 @@ public partial class MainWindow : Window
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
-            _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20))));
+            _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value)));
             _testPlayer.Play();
         } catch (Exception ex) { TestStatus.Text = ex.Message; }
     }
@@ -288,13 +288,49 @@ public partial class MainWindow : Window
     {
         private readonly NAudio.Wave.ISampleProvider source;
         private readonly float gain;
-        public TestGainProvider(NAudio.Wave.ISampleProvider source, float gain) { this.source = source; this.gain = gain; }
+        private readonly bool studio, gate, compressor;
+        private readonly float threshold, attack, release;
+        private readonly NAudio.Dsp.BiQuadFilter[] hp, eq;
+        private readonly bool highPass;
+        private readonly float[] envelope, gateGain;
+        private int channel;
+        public TestGainProvider(NAudio.Wave.ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence)
+        {
+            this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
+            threshold = (float)Math.Pow(10, thresholdDb / 20);
+            int rate = source.WaveFormat.SampleRate, channels = source.WaveFormat.Channels;
+            attack = (float)Math.Exp(-1.0 / (rate * .005)); release = (float)Math.Exp(-1.0 / (rate * .15));
+            hp = new NAudio.Dsp.BiQuadFilter[channels]; eq = new NAudio.Dsp.BiQuadFilter[channels];
+            envelope = new float[channels]; gateGain = new float[channels];
+            for (int i = 0; i < channels; i++) {
+                hp[i] = NAudio.Dsp.BiQuadFilter.HighPassFilter(rate, 80, .707f);
+                eq[i] = NAudio.Dsp.BiQuadFilter.PeakingEQ(rate, Math.Min(2500, rate / 4f), 1f, (float)presence);
+            }
+        }
         public NAudio.Wave.WaveFormat WaveFormat => source.WaveFormat;
         public int Read(float[] buffer, int offset, int count)
         {
             int read = source.Read(buffer, offset, count);
-            for (int i = offset; i < offset + read; i++)
-                buffer[i] = 0.35f * (float)Math.Tanh(buffer[i] * gain);
+            for (int i = offset; i < offset + read; i++) {
+                float v = buffer[i];
+                if (studio) {
+                    if (highPass) v = hp[channel].Transform(v);
+                    v = eq[channel].Transform(v);
+                    float level = Math.Abs(v);
+                    float coeff = level > envelope[channel] ? attack : release;
+                    envelope[channel] = coeff * envelope[channel] + (1-coeff)*level;
+                    if (gate) {
+                        float target = envelope[channel] >= threshold ? 1f : .03f;
+                        float smooth = target > gateGain[channel] ? attack : release;
+                        gateGain[channel] = smooth * gateGain[channel] + (1-smooth)*target;
+                        v *= gateGain[channel];
+                    }
+                    if (compressor && envelope[channel] > .125f)
+                        v *= (float)Math.Pow(.125f / envelope[channel], .6667);
+                }
+                buffer[i] = .35f * (float)Math.Tanh(v * gain);
+                channel = (channel + 1) % WaveFormat.Channels;
+            }
             return read;
         }
     }
