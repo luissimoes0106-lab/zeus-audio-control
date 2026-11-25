@@ -28,6 +28,7 @@
         <Slider Name="MicSlider" Minimum="0" Maximum="100" ValueChanged="MicSlider_ValueChanged"/>
         <TextBlock Name="MicLabel" Text="—"/><CheckBox Foreground="White" Name="MicMute" Content="Silenciar microfone" Checked="MicMute_Changed" Unchecked="MicMute_Changed" Margin="0,8,0,8"/><TextBlock Text="Intensidade do microfone"/><ProgressBar Name="MicMeter" Minimum="0" Maximum="100" Height="12" Foreground="#D73939"/><TextBlock Name="PeakDb" Text="Pico: — dBFS" Margin="0,6,0,8"/><TextBlock Text="Ganho digital para ouvir o teste (não altera Discord ou OBS)" TextWrapping="Wrap"/><Slider Name="TestGain" Minimum="0" Maximum="24" TickFrequency="3" IsSnapToTickEnabled="True" Value="6"/><TextBlock Text="{Binding ElementName=TestGain, Path=Value, StringFormat={}{0:0} dB}"/>
       <TextBlock Text="Microphone Studio — processamento do teste local" FontSize="18" Margin="0,18,0,8"/>
+<WrapPanel Margin="0,0,0,10"><Button Content="Studio" Tag="studio" Click="Preset_Click"/><Button Content="Discord" Tag="discord" Click="Preset_Click"/><Button Content="Gravação" Tag="record" Click="Preset_Click"/><Button Content="Salvar perfil" Click="SaveStudio_Click"/></WrapPanel><TextBlock Name="StudioStatus" TextWrapping="Wrap"/>
 <CheckBox Name="StudioEnabled" Content="Ativar efeitos Studio" Foreground="White" IsChecked="True" Margin="0,4"/>
 <CheckBox Name="HighPass" Content="Filtro de graves (80 Hz)" Foreground="White" IsChecked="True" Margin="0,4"/>
 <CheckBox Name="GateEnabled" Content="Noise Gate (reduz sons baixos)" Foreground="White" IsChecked="True" Margin="0,4"/>
