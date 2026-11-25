@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        SetupTray();
         RefreshDevices();
         RestoreSelection();
         RestoreStudio();
@@ -33,12 +34,29 @@ public partial class MainWindow : Window
         {
             SystemEvents.SessionEnding -= OnSessionEnding;
             _timer.Stop();
+            _tray?.ContextMenuStrip?.Dispose();
+            _tray?.Dispose();
+            _trayIcon?.Dispose();
             StopTest();
             ReleaseDevices();
             _enumerator.Dispose();
         };
     }
 
+    private System.Windows.Forms.NotifyIcon? _tray;
+    private System.Drawing.Icon? _trayIcon;
+    private void SetupTray()
+    {
+        _trayIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
+        _tray = new System.Windows.Forms.NotifyIcon { Icon = _trayIcon, Text = "ZEUS Audio Control", Visible = true };
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Abrir ZEUS", null, (_, _) => Dispatcher.Invoke(RestoreWindow));
+        menu.Items.Add("Sair", null, (_, _) => Dispatcher.Invoke(Close));
+        _tray.ContextMenuStrip = menu;
+        _tray.DoubleClick += (_, _) => Dispatcher.Invoke(RestoreWindow);
+        StateChanged += (_, _) => { if (WindowState == WindowState.Minimized && TrayToggle.IsChecked == true) Hide(); };
+    }
+    private void RestoreWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void OnSessionEnding(object? sender, SessionEndingEventArgs e) => Close();
 
     private void ReleaseDevices()
