@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        SetupEq();
         SetupTray();
         LoadAliases();
         RefreshDevices();
@@ -41,6 +42,7 @@ public partial class MainWindow : Window
             _tray?.Dispose();
             _trayIcon?.Dispose();
             StopTest();
+            StopEq();
             ReleaseDevices();
             _enumerator.Dispose();
         };
@@ -372,13 +374,34 @@ public partial class MainWindow : Window
     private void LoadAliases() { try { if(System.IO.File.Exists(AliasPath)) _aliases=System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,string>>(System.IO.File.ReadAllText(AliasPath)) ?? new(); } catch { } }
     private void ShowAliases() { OutputAlias.Text=_output is null?"":_aliases.GetValueOrDefault(_output.ID,""); InputAlias.Text=_input is null?"":_aliases.GetValueOrDefault(_input.ID,""); }
     private void Alias_Click(object sender,RoutedEventArgs e) { try { bool output=(sender as Button)?.Tag as string=="out"; var device=output?_output:_input; if(device is null)return; var alias=(output?OutputAlias.Text:InputAlias.Text).Trim(); if(alias.Length>80) { Footer.Text="Use até 80 caracteres.";return; } if(alias.Length==0)_aliases.Remove(device.ID);else _aliases[device.ID]=alias; System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(AliasPath)!); System.IO.File.WriteAllText(AliasPath,System.Text.Json.JsonSerializer.Serialize(_aliases)); Footer.Text=alias.Length==0?"Apelido removido.":$"Apelido salvo: {alias}"; }catch(Exception ex){Footer.Text=ex.Message;} }
-    private void SaveLocal() { try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!); System.IO.File.WriteAllText(StudioPath,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); System.IO.File.WriteAllText(_settingsPath,System.Text.Json.JsonSerializer.Serialize(new string?[]{_output?.ID,_input?.ID})); } catch { } }
+    private void SaveLocal() { try { SaveEq(); System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!); System.IO.File.WriteAllText(StudioPath,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); System.IO.File.WriteAllText(_settingsPath,System.Text.Json.JsonSerializer.Serialize(new string?[]{_output?.ID,_input?.ID})); } catch { } }
     private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControl") is string; } catch { } }
     private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControl","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControl",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
     private void Export_Click(object sender,RoutedEventArgs e) { try { var d=new Microsoft.Win32.SaveFileDialog{Filter="Perfil ZEUS (*.json)|*.json",FileName="zeus-voice.json"}; if(d.ShowDialog()==true) System.IO.File.WriteAllText(d.FileName,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); } catch(Exception ex){Footer.Text=ex.Message;} }
     private void Import_Click(object sender,RoutedEventArgs e) { try { var d=new Microsoft.Win32.OpenFileDialog{Filter="Perfil ZEUS (*.json)|*.json"}; if(d.ShowDialog()==true && new System.IO.FileInfo(d.FileName).Length<65536 && System.Text.Json.JsonSerializer.Deserialize<StudioProfile>(System.IO.File.ReadAllText(d.FileName)) is StudioProfile p){ApplyStudio(p);SaveLocal();} } catch(Exception ex){Footer.Text=ex.Message;} }
     private void Reset_Click(object sender,RoutedEventArgs e) { ApplyStudio(new StudioProfile(6,true,true,true,-45,true,2));SaveLocal(); }
     private async void Stereo_Click(object sender,RoutedEventArgs e) { if(_output is null)return; try { int side=(sender as Button)?.Tag as string=="1"?1:0; var samples=new byte[48000*4/2]; for(int i=0;i<24000;i++){short v=(short)(Math.Sin(i*2*Math.PI*440/48000)*1800*Math.Min(1,Math.Min(i,23999-i)/480.0)); int j=i*4+side*2;samples[j]=(byte)v;samples[j+1]=(byte)(v>>8);} using var stream=new System.IO.MemoryStream(samples); using var wave=new NAudio.Wave.RawSourceWaveStream(stream,new NAudio.Wave.WaveFormat(48000,16,2)); using var player=new NAudio.Wave.WasapiOut(_output,AudioClientShareMode.Shared,false,100); player.Init(wave);player.Play();await System.Threading.Tasks.Task.Delay(800);player.Stop(); }catch(Exception ex){Footer.Text=ex.Message;} }
+
+    private readonly double[] _freq={31,62,125,250,500,1000,2000,4000,8000,16000};
+    private readonly List<Slider> _bands=new();
+    private NAudio.Wave.AudioFileReader? _eqReader;
+    private NAudio.Wave.WaveOutEvent? _eqPlayer;
+    private string EqPath=>System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!,"eq.json");
+    private void SetupEq(){
+        foreach(var f in _freq){var panel=new StackPanel();var slider=new Slider{Orientation=System.Windows.Controls.Orientation.Vertical,Minimum=-12,Maximum=12,Height=120,Width=24,Value=0};_bands.Add(slider);panel.Children.Add(slider);panel.Children.Add(new TextBlock{Text=f>=1000?$"{f/1000:0}k":$"{f:0}",FontSize=10,HorizontalAlignment=HorizontalAlignment.Center});EqGrid.Children.Add(panel);}
+        try{if(System.IO.File.Exists(EqPath)){var v=System.Text.Json.JsonSerializer.Deserialize<double[]>(System.IO.File.ReadAllText(EqPath));if(v?.Length==11){for(int i=0;i<10;i++)_bands[i].Value=Math.Clamp(v[i],-12,12);BassBoost.Value=Math.Clamp(v[10],0,9);}}}catch{}
+    }
+    private void SaveEq(){System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(EqPath)!);System.IO.File.WriteAllText(EqPath,System.Text.Json.JsonSerializer.Serialize(_bands.Select(b=>b.Value).Append(BassBoost.Value).ToArray()));}
+    private void EqPreset_Click(object sender,RoutedEventArgs e){double[] v=((sender as Button)?.Tag as string) switch{"game"=>new double[]{-3,-2,-1,0,1,2,4,4,2,0},"music"=>new double[]{3,3,2,0,-1,0,1,2,3,2},"movie"=>new double[]{4,3,2,0,0,2,2,1,0,0},_=>new double[10]};for(int i=0;i<10;i++)_bands[i].Value=v[i];BassBoost.Value=0;}
+    private void StopEq(){_eqPlayer?.Dispose();_eqPlayer=null;_eqReader?.Dispose();_eqReader=null;}
+    private void EqStop_Click(object sender,RoutedEventArgs e){StopEq();EqStatus.Text="Reprodução parada.";}
+    private void EqPlay_Click(object sender,RoutedEventArgs e){try{var d=new Microsoft.Win32.OpenFileDialog{Filter="Áudio|*.wav;*.mp3;*.aiff;*.wma"};if(d.ShowDialog()!=true)return;StopEq();_eqReader=new NAudio.Wave.AudioFileReader(d.FileName);_eqPlayer=new NAudio.Wave.WaveOutEvent();_eqPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new LocalEq(_eqReader,_freq,_bands.Select(b=>b.Value).ToArray(),BassBoost.Value)));_eqPlayer.Play();EqStatus.Text="Reproduzindo na saída padrão. Para aplicar novos ajustes, reabra o arquivo.";}catch(Exception ex){StopEq();EqStatus.Text=ex.Message;}}
+    private sealed class LocalEq:NAudio.Wave.ISampleProvider{
+        private readonly NAudio.Wave.ISampleProvider source;private readonly NAudio.Dsp.BiQuadFilter[][] filters;private int channel;private readonly float headroom;
+        public LocalEq(NAudio.Wave.ISampleProvider source,double[] freq,double[] gains,double bass){this.source=source;filters=new NAudio.Dsp.BiQuadFilter[source.WaveFormat.Channels][];int rate=source.WaveFormat.SampleRate;headroom=(float)Math.Pow(10,-(Math.Max(0,gains.Max())+bass+3)/20);for(int c=0;c<filters.Length;c++){var list=new List<NAudio.Dsp.BiQuadFilter>();for(int i=0;i<freq.Length;i++)if(freq[i]<rate*.45 && Math.Abs(gains[i])>.01)list.Add(NAudio.Dsp.BiQuadFilter.PeakingEQ(rate,(float)freq[i],1.4f,(float)gains[i]));if(bass>0)list.Add(NAudio.Dsp.BiQuadFilter.PeakingEQ(rate,80,.7f,(float)bass));filters[c]=list.ToArray();}}
+        public NAudio.Wave.WaveFormat WaveFormat=>source.WaveFormat;
+        public int Read(float[] buffer,int offset,int count){int n=source.Read(buffer,offset,count);for(int i=offset;i<offset+n;i++){float v=buffer[i]*headroom;foreach(var f in filters[channel])v=f.Transform(v);buffer[i]=Math.Clamp(v,-.85f,.85f);channel=(channel+1)%filters.Length;}return n;}
+    }
     private sealed class TestGainProvider : NAudio.Wave.ISampleProvider
     {
         private readonly NAudio.Wave.ISampleProvider source;
