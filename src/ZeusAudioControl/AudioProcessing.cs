@@ -7,7 +7,11 @@ internal sealed class LocalEq : ISampleProvider
 {
     private readonly ISampleProvider source;
     private readonly double[] frequencies;
-    private readonly BiQuadFilter[][] filters;
+    private BiQuadFilter[][] filters;
+    private BiQuadFilter[][]? previousFilters;
+    private float previousHeadroom;
+    private int transitionLeft;
+    private readonly int transitionSamples;
     private int channel;
     private float headroom;
     private Settings? pending;
@@ -19,6 +23,7 @@ internal sealed class LocalEq : ISampleProvider
         this.source = source;
         this.frequencies = frequencies;
         filters = new BiQuadFilter[WaveFormat.Channels][];
+        transitionSamples = Math.Max(1, WaveFormat.SampleRate * WaveFormat.Channels / 20);
         Apply(new Settings(gains, bass));
     }
 
@@ -45,12 +50,27 @@ internal sealed class LocalEq : ISampleProvider
 
     public int Read(float[] buffer, int offset, int count)
     {
-        if (System.Threading.Interlocked.Exchange(ref pending, null) is { } settings) Apply(settings);
+        if (transitionLeft == 0 && System.Threading.Interlocked.Exchange(ref pending, null) is { } settings)
+        {
+            previousFilters = filters;
+            previousHeadroom = headroom;
+            filters = new BiQuadFilter[WaveFormat.Channels][];
+            Apply(settings);
+            transitionLeft = transitionSamples;
+        }
         var read = source.Read(buffer, offset, count);
         for (var i = offset; i < offset + read; i++)
         {
             var sample = buffer[i] * headroom;
             foreach (var filter in filters[channel]) sample = filter.Transform(sample);
+            if (previousFilters is { } previous)
+            {
+                var old = buffer[i] * previousHeadroom;
+                foreach (var filter in previous[channel]) old = filter.Transform(old);
+                var ratio = (float)transitionLeft / transitionSamples;
+                sample += (old - sample) * ratio;
+                if (--transitionLeft == 0) previousFilters = null;
+            }
             buffer[i] = Math.Clamp(sample, -.85f, .85f);
             channel = (channel + 1) % filters.Length;
         }
@@ -217,11 +237,12 @@ internal sealed class RouteBuffer : IWaveProvider
     }
 }
 
-internal sealed class RouteDynamics(ISampleProvider source, bool compressor, bool normalize, float cap) : ISampleProvider
+internal sealed class RouteDynamics(ISampleProvider source, bool compressor, bool normalize, float cap, Func<float>? protection = null) : ISampleProvider
 {
     private float peak;
     private float power;
     private float volumeGain = 1;
+    private float protectionPeak;
     private readonly float peakRelease = (float)Math.Exp(-1.0 / (source.WaveFormat.SampleRate * source.WaveFormat.Channels * .12));
     private readonly float smoothing = (float)(1 - Math.Exp(-1.0 / (source.WaveFormat.SampleRate * source.WaveFormat.Channels * .5)));
 
@@ -230,6 +251,7 @@ internal sealed class RouteDynamics(ISampleProvider source, bool compressor, boo
     public int Read(float[] buffer, int offset, int count)
     {
         var read = source.Read(buffer, offset, count);
+        var ceiling = Math.Min(cap, protection?.Invoke() ?? cap);
         for (var i = offset; i < offset + read; i++)
         {
             var sample = float.IsFinite(buffer[i]) ? buffer[i] : 0;
@@ -243,7 +265,13 @@ internal sealed class RouteDynamics(ISampleProvider source, bool compressor, boo
             var gain = volumeGain;
             if (compressor && peak * gain > .22f)
                 gain *= MathF.Pow(.22f / (peak * gain), .75f);
-            buffer[i] = Math.Clamp(sample * gain, -cap, cap);
+            var adjusted = sample * gain;
+            if (protection is not null && ceiling < cap)
+            {
+                protectionPeak = Math.Max(Math.Abs(adjusted), protectionPeak * peakRelease);
+                if (protectionPeak > ceiling) adjusted *= ceiling / protectionPeak;
+            }
+            buffer[i] = Math.Clamp(adjusted, -ceiling, ceiling);
         }
         return read;
     }

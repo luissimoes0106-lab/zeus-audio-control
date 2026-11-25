@@ -35,6 +35,7 @@ public partial class MainWindow
 
     private void QuickControl_Click(object sender, RoutedEventArgs e)
     {
+        if (_quickControl is { } existing) { existing.Activate(); return; }
         if (!IsVisible) RestoreWindow();
         var (window, body) = BrandWindow("ZEUS Quick Control");
         AddVolume(L("Saída", "Output"), VolumeSlider, MuteToggle);
@@ -45,7 +46,36 @@ public partial class MainWindow
         stop.Click += (_, _) => { foreach (var active in _routes.Values) active.Audio.Stop(); stop.IsEnabled = false; };
         body.Children.Add(routing);
         body.Children.Add(stop);
-        window.ShowDialog();
+        var mixer = new Button { Content = "ZEUS Audio Mixer" };
+        mixer.Click += Mixer_Click;
+        body.Children.Add(mixer);
+        var presets = new WrapPanel();
+        foreach (var (label, key) in new[] { ("Gaming", "game"), (L("Música", "Music"), "music"), (L("Filmes", "Movies"), "movie"), ("Flat", "flat") })
+        {
+            var preset = new Button { Content = label, Tag = key };
+            preset.Click += EqPreset_Click;
+            presets.Children.Add(preset);
+        }
+        body.Children.Add(presets);
+        var battery = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var cancel = new CancellationTokenSource();
+        body.Children.Add(battery);
+        var batteryTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        bool batteryBusy = false;
+        async Task RefreshBattery()
+        {
+            if (batteryBusy || !window.IsVisible) return;
+            batteryBusy = true;
+            try { await ShowBatteryStatus(battery, cancel.Token); }
+            finally { batteryBusy = false; }
+        }
+        batteryTimer.Tick += async (_, _) => await RefreshBattery();
+        window.Loaded += async (_, _) => { batteryTimer.Start(); await RefreshBattery(); };
+        _quickControl = window;
+        window.Closed += (_, _) => { batteryTimer.Stop(); cancel.Cancel(); _quickControl = null; };
+        window.Topmost = _intelligence.FloatingPanel;
+        if (_intelligence.FloatingPanel) window.Show();
+        else window.ShowDialog();
 
         void AddVolume(string label, Slider source, CheckBox mute)
         {
@@ -64,7 +94,7 @@ public partial class MainWindow
     private void AboutZeus_Click(object sender, RoutedEventArgs e)
     {
         var (window, body) = BrandWindow(L("Sobre o ZEUS", "About ZEUS"));
-        body.Children.Add(new TextBlock { Text = "ZEUS Audio Control · Beta 0.7", FontWeight = FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = "ZEUS Audio Control · Beta 0.7.1", FontWeight = FontWeights.SemiBold });
         var releases = new Button
         {
             Content = L("Ver versões no GitHub", "View releases on GitHub"),
@@ -170,7 +200,7 @@ public partial class MainWindow
             try
             {
                 using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7.1");
                 using var response = await client.GetAsync(
                     "https://api.github.com/repos/luissimoes0106-lab/zeus-audio-control/releases?per_page=30", cancellation.Token);
                 response.EnsureSuccessStatusCode();
@@ -191,7 +221,7 @@ public partial class MainWindow
                 {
                     var version = Version.Parse(newer.Match.Groups[1].Value);
                     releaseTag = newer.Tag;
-                    installerName = $"ZEUS-Audio-Control-Beta-{version.Major}.{version.Minor}-Setup-x64.exe";
+                    installerName = $"ZEUS-Audio-Control-Beta-{(version.Build == 0 ? version.ToString(2) : version.ToString(3))}-Setup-x64.exe";
                     download.IsEnabled = true;
                 }
                 status.Text = newer.Tag is not null

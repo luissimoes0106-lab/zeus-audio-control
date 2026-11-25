@@ -3,6 +3,35 @@ using ZeusAudioControl;
 
 var tests = new (string, Action)[]
 {
+    ("Battery preserves zero and rejects readings outside the hardware range", () =>
+    {
+        Check(IntelligenceRules.BatteryPercent(0) == 0 && IntelligenceRules.BatteryPercent(100) == 100);
+        Check(IntelligenceRules.BatteryPercent(255) is null && IntelligenceRules.BatteryPercent(null) is null);
+    }),
+    ("Foreground rules honor full executable path and priority", () =>
+    {
+        AppProfile[] profiles = [new("C:/game.exe", "low", 1), new("C:/game.exe", "high", 5)];
+        Check(IntelligenceRules.ForegroundProfile("c:/GAME.exe", profiles)?.File == "high");
+        Check(IntelligenceRules.ForegroundProfile("D:/game.exe", profiles) is null);
+    }),
+    ("Hearing limit clamps unsafe values and calibration rejects clipped speech", () =>
+    {
+        Check(IntelligenceRules.Limit(85, 60) == 60 && IntelligenceRules.Limit(double.NaN, 60) == 0);
+        var baseline = new StudioProfile(0, false, true, false, -45, false, 2);
+        var profile = IntelligenceRules.Calibrate(baseline, -60, -30, -12);
+        Check(profile.Gain == 6 && profile.Threshold == -52 && profile.Compressor);
+        try { IntelligenceRules.Calibrate(baseline, -60, -30, 0); }
+        catch (InvalidOperationException) { return; }
+        throw new Exception("Clipped speech accepted.");
+    }),
+    ("Playback protection caps a sudden peak even when Smart Volume is enabled", () =>
+    {
+        var output = new RouteDynamics(new Signal(1, i => i == 3000 ? 1f : .01f), false, true, .85f, () => .15f);
+        var samples = new float[6000];
+        output.Read(samples, 0, samples.Length);
+        Check(samples.Max(Math.Abs) <= .15f && samples[3000] >= .14f);
+        Check(samples[3001] < .01f);
+    }),
     ("Simultaneous routing requires distinct cable containers and rejects unknown topology", () =>
     {
         var cable = Guid.NewGuid();

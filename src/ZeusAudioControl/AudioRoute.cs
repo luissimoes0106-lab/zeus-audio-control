@@ -17,6 +17,9 @@ internal sealed class AudioRoute(int outputBufferMilliseconds = 40)
     internal double CaptureLatencyMilliseconds;
     internal int OutputBufferMilliseconds { get; } = outputBufferMilliseconds;
     private int telemetry;
+    private float protection = .85f;
+    public void SetProtection(double? percentage) =>
+        Volatile.Write(ref protection, percentage is null ? .85f : (float)(.85 * IntelligenceRules.Limit(percentage.Value, 100) / 100));
     public void SetTelemetry(bool enabled) => Volatile.Write(ref telemetry, enabled ? 1 : 0);
 
     public Task Run(string inputId, string outputId, RouteKind kind, double[] frequencies, double[] gains, double bass,
@@ -63,7 +66,7 @@ internal sealed class AudioRoute(int outputBufferMilliseconds = 40)
         {
             var eq = new LocalEq(before, frequencies, gains, bass);
             Volatile.Write(ref Eq, eq);
-            processed = new RouteDynamics(eq, compressor, normalize, .85f);
+            processed = new RouteDynamics(eq, compressor, normalize, .85f, () => Volatile.Read(ref protection));
         }
         else
         {

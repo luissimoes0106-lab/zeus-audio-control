@@ -10,6 +10,7 @@
     <Compile Include="../../src/ZeusAudioControl/ProfileFile.cs" Link="ProfileFile.cs" />
     <Compile Include="../../src/ZeusAudioControl/RouteSafety.cs" Link="RouteSafety.cs" />
     <Compile Include="../../src/ZeusAudioControl/UpdateFiles.cs" Link="UpdateFiles.cs" />
+    <Compile Include="../../src/ZeusAudioControl/IntelligenceRules.cs" Link="IntelligenceRules.cs" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
   </ItemGroup>
 </Project>

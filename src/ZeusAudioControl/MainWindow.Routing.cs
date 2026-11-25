@@ -155,6 +155,7 @@ public partial class MainWindow
         }
 
         var route = new AudioRoute(RouteLowLatency.IsChecked == true ? 25 : 40);
+        route.SetProtection(_intelligence.HearingLimit);
         var active = new ActiveRoute(route, endpoints, CurrentStudio(), RouteCompressor.IsChecked == true,
             RouteNormalizer.IsChecked == true);
         _routes.Add(kind, active);
@@ -171,6 +172,7 @@ public partial class MainWindow
                     active.Running = true;
                     if (SelectedRouteKind == kind) RouteStatus.Text = L("Rota ativa", "Route active");
                     UpdatePlaybackEq();
+                    PollForeground();
                     UpdateDashboard();
                 }));
             if (!_closing && SelectedRouteKind == kind)
@@ -188,6 +190,7 @@ public partial class MainWindow
         finally
         {
             _routes.Remove(kind);
+            if (!_closing) PollForeground();
             if (!_closing)
             {
                 if (SelectedRouteKind == kind)

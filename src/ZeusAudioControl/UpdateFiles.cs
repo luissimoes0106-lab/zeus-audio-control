@@ -6,7 +6,7 @@ namespace ZeusAudioControl;
 internal static class UpdateFiles
 {
     public const long MaximumPackage = 256L * 1024 * 1024;
-    public static readonly string[] Settings = ["devices.json", "studio.json", "eq.json", "aliases.json", "preferences.json"];
+    public static readonly string[] Settings = ["devices.json", "studio.json", "eq.json", "aliases.json", "preferences.json", "intelligence.json"];
 
     public static string HashFor(string manifest, string name)
     {

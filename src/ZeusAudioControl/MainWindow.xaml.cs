@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         MigrateEarlierSettings();
+        StartIntelligence();
         SetupEq();
         foreach (var slider in _bands.Concat([BassBoost, LowTone, MidTone, HighTone]))
             slider.ValueChanged += (_, _) =>
@@ -71,6 +72,8 @@ public partial class MainWindow : Window
             _timer.Stop();
             foreach (var active in _routes.Values) active.Audio.Stop();
             PersistIfChanged();
+            if (_intelligenceDirty) SaveIntelligence();
+            StopIntelligence();
             _tray?.ContextMenuStrip?.Dispose();
             _tray?.Dispose();
             _trayIcon?.Dispose();
@@ -132,6 +135,7 @@ public partial class MainWindow : Window
             _ownedDevices.AddRange(render);
             var capture = _enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active).ToList();
             _ownedDevices.AddRange(capture);
+            RecordEndpointChanges(_ownedDevices);
             OutputDevices.ItemsSource = render.Select(Choice).ToArray();
             InputDevices.ItemsSource = capture.Select(Choice).ToArray();
             UpdateRouteChoices(capture, render, routeInput, routeOutput);
@@ -167,6 +171,7 @@ public partial class MainWindow : Window
         if (_updating) return;
         _output = Selected(OutputDevices);
         _preferredOutput = _output?.ID;
+        RestoreEndpoint(_output, true);
         SyncOutput();
         ShowAliases();
         UpdateDashboard();
@@ -177,6 +182,7 @@ public partial class MainWindow : Window
         if (_updating) return;
         _input = Selected(InputDevices);
         _preferredInput = _input?.ID;
+        RestoreEndpoint(_input, false);
         SyncInput();
         ShowAliases();
         UpdateDashboard();
@@ -234,7 +240,16 @@ public partial class MainWindow : Window
         if (_updating || _output is null) return;
         try
         {
-            _output.AudioEndpointVolume.MasterVolumeLevelScalar = (float)(VolumeSlider.Value / 100);
+            var safe = IntelligenceRules.Limit(VolumeSlider.Value, _intelligence.HearingLimit ?? 100);
+            if (safe != VolumeSlider.Value)
+            {
+                _updating = true;
+                try { VolumeSlider.Value = safe; }
+                finally { _updating = false; }
+                Footer.Text = L("Limite de volume aplicado.", "Volume limit applied.");
+            }
+            _output.AudioEndpointVolume.MasterVolumeLevelScalar = (float)(safe / 100);
+            RememberEndpoint(_output);
             VolumeLabel.Text = $"{VolumeSlider.Value:0}%";
         }
         catch (Exception ex) { Footer.Text = $"Falha ao ajustar volume: {ex.Message}"; }
@@ -259,6 +274,7 @@ public partial class MainWindow : Window
         try
         {
             _input.AudioEndpointVolume.MasterVolumeLevelScalar = (float)(MicSlider.Value / 100);
+            RememberEndpoint(_input);
             MicLabel.Text = $"{MicSlider.Value:0}%";
         }
         catch (Exception ex) { Footer.Text = $"Falha ao ajustar microfone: {ex.Message}"; }
@@ -267,14 +283,14 @@ public partial class MainWindow : Window
     private void MuteToggle_Changed(object sender, RoutedEventArgs e)
     {
         if (_updating || _output is null) return;
-        try { _output.AudioEndpointVolume.Mute = MuteToggle.IsChecked == true; }
+        try { _output.AudioEndpointVolume.Mute = MuteToggle.IsChecked == true; RememberEndpoint(_output); }
         catch (Exception ex) { Footer.Text = $"Falha ao silenciar: {ex.Message}"; }
     }
 
     private void MicMute_Changed(object sender, RoutedEventArgs e)
     {
         if (_updating || _input is null) return;
-        try { _input.AudioEndpointVolume.Mute = MicMute.IsChecked == true; }
+        try { _input.AudioEndpointVolume.Mute = MicMute.IsChecked == true; RememberEndpoint(_input); }
         catch (Exception ex) { Footer.Text = $"Falha ao silenciar microfone: {ex.Message}"; }
     }
 
@@ -286,7 +302,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                var peak = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue;
+                var peak = _input is null || !IsVisible ? 0 : _input.AudioMeterInformation.MasterPeakValue;
                 var db = 20 * Math.Log10(Math.Max(0.000001, peak));
                 MicMeter.Value = Math.Clamp((db + 60) / 60 * 100, 0, 100);
                 PeakDb.Text = _english ? $"Peak: {db:0.0} dBFS" : $"Pico: {db:0.0} dBFS";
@@ -311,11 +327,16 @@ public partial class MainWindow : Window
             PersistIfChanged();
             UpdateDashboard();
             if (_page == "Áudio" && _ticks % 70 == 0) _diagnosedOutput = null;
-            var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
-            string signature;
-            try { signature = string.Join("|", devices.Select(d => d.ID).OrderBy(id => id)); }
-            finally { foreach (var d in devices) d.Dispose(); }
-            if (signature != _signature) RefreshDevices();
+            PollIntelligence();
+            var refresh = _endpointsChanged;
+            _endpointsChanged = false;
+            if (_endpointNotifications is null || _ticks % 140 == 0)
+            {
+                var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
+                try { refresh |= string.Join("|", devices.Select(d => d.ID).OrderBy(id => id)) != _signature; }
+                finally { foreach (var device in devices) device.Dispose(); }
+            }
+            if (refresh) RefreshDevices();
             else
             {
                 if (!VolumeSlider.IsMouseCaptureWithin && !BalanceSlider.IsMouseCaptureWithin) SyncOutput();
@@ -518,9 +539,11 @@ public partial class MainWindow : Window
         catch (Exception ex) { Footer.Text = ex.Message; }
     }
 
-    private async void Record_Click(object sender, RoutedEventArgs e)
+    private async void Record_Click(object sender, RoutedEventArgs e) => await CaptureTest();
+
+    private async Task<bool> CaptureTest()
     {
-        if (_input is null || _testCapture is not null) return;
+        if (_input is null || _testCapture is not null) return false;
         RecordButton.IsEnabled = PlayButton.IsEnabled = false;
         StopMicrophonePlayback();
         try {
@@ -538,16 +561,17 @@ public partial class MainWindow : Window
             _testCapture.StartRecording();
             TestStatus.Text = T("Gravando localmente por 5 segundos...");
             await System.Threading.Tasks.Task.WhenAny(done.Task, System.Threading.Tasks.Task.Delay(5000));
-            if (_closing) return;
+            if (_closing) return false;
             _testCapture?.StopRecording();
             if (await System.Threading.Tasks.Task.WhenAny(done.Task, System.Threading.Tasks.Task.Delay(3000)) != done.Task) throw new TimeoutException("Tempo limite de gravação.");
-            if (_closing) return;
+            if (_closing) return false;
             if (await done.Task is Exception error) throw error;
             _testCapture?.Dispose(); _testCapture = null;
             _testWriter?.Dispose(); _testWriter = null;
             PlayButton.IsEnabled = true;
             TestStatus.Text = T("Teste gravado. Ouça com volume baixo. Reprodução pela saída padrão do Windows.");
-        } catch (Exception ex) { StopTest(); TestStatus.Text = ex.Message; }
+            return true;
+        } catch (Exception ex) { StopTest(); TestStatus.Text = ex.Message; return false; }
         finally { if (!_closing) RecordButton.IsEnabled = true; }
     }
     private void UpdateWaveform(byte[] data, int length, NAudio.Wave.WaveFormat format)
@@ -587,17 +611,19 @@ public partial class MainWindow : Window
         });
     }
 
-    private void Play_Click(object sender, RoutedEventArgs e)
+    private void Play_Click(object sender, RoutedEventArgs e) => PlayTest(RawPlayback.IsChecked == true);
+
+    private void PlayTest(bool original, StudioProfile? preview = null)
     {
         try {
             StopMicrophonePlayback();
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
-            if (RawPlayback.IsChecked == true) { _testReader.Volume = .35f; _testPlayer.Init(_testReader); }
+            if (original) { _testReader.Volume = .35f; _testPlayer.Init(_testReader); }
             else
             {
-                var profile = CurrentStudio();
+                var profile = preview ?? CurrentStudio();
                 _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader,
                     (float)Math.Pow(10, profile.Gain / 20), profile.Enabled, profile.HighPass, profile.Gate, profile.Threshold,
                     profile.Compressor, profile.Presence, profile.Noise, profile.Attack, profile.Hold, profile.Release,
@@ -861,7 +887,15 @@ public partial class MainWindow : Window
         if (_playbackEq is null && routeEq is null) return;
         var gains = PlaybackGains();
         _playbackEq?.SetGains(gains, BassBoost.Value);
-        routeEq?.SetGains(gains, BassBoost.Value);
+        if (routeEq is not null)
+        {
+            if (_automaticEq is { } automatic)
+            {
+                var bands = automatic.Take(10).Concat(automatic.Length == 14 ? automatic.Skip(11) : new double[3]).ToArray();
+                routeEq.SetGains(bands, automatic[10]);
+            }
+            else routeEq.SetGains(gains, BassBoost.Value);
+        }
     }
 
     private void EqPlay_Click(object sender, RoutedEventArgs e)

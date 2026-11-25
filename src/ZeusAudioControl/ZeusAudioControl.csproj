@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Zeus.ico</ApplicationIcon>
-    <Version>0.7.0-beta</Version>
+    <Version>0.7.1-beta</Version>
     <AssemblyName>ZeusAudioControl</AssemblyName>
     <Product>ZEUS Audio Control</Product>
     <Description>Windows audio processing, endpoint routing and microphone monitoring.</Description>

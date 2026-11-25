@@ -14,6 +14,9 @@ public partial class MainWindow
         brandingDialog.ApplyTemplate();
         if (brandingDialog.Icon is null) throw new InvalidOperationException("Branded dialog icon did not load.");
         brandingDialog.Close();
+        VerifyDialog("ZEUS Intelligence Pack", Intelligence_Click);
+        VerifyDialog("ZEUS Audio Mixer", Mixer_Click);
+        VerifyDialog("ZEUS Quick Control", QuickControl_Click);
         var sizes = new[] { new Size(630, 500), new Size(860, 620), new Size(1180, 760) };
         var pages = new (string Page, FrameworkElement Panel)[]
         {
@@ -52,5 +55,23 @@ public partial class MainWindow
         ApplyPreferences();
         if (PageTitle.Text != "Routes" || RouteHelp.Text.Length == 0)
             throw new InvalidOperationException("Route language resources did not update.");
+    }
+
+    private void VerifyDialog(string title, RoutedEventHandler open)
+    {
+        Exception? issue = null;
+        var visited = false;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, () =>
+        {
+            var popup = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.Title == title);
+            if (popup is null) { issue = new InvalidOperationException($"{title} did not open."); return; }
+            visited = true;
+            if (popup.Icon is null || popup.Content is not FrameworkElement content || content.ActualHeight <= 0)
+                issue = new InvalidOperationException($"{title} did not render its content and icon.");
+            popup.Close();
+        });
+        open(this, new RoutedEventArgs());
+        if (issue is not null) throw issue;
+        if (!visited) throw new InvalidOperationException($"{title} did not enter its modal loop.");
     }
 }
