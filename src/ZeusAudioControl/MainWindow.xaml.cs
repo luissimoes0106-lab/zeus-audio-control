@@ -89,15 +89,15 @@ public partial class MainWindow : Window
             OutputDevices.ItemsSource = render;
             InputDevices.ItemsSource = capture;
             _signature = string.Join("|", render.Concat(capture).Select(d => d.ID).OrderBy(id => id));
-            OutputDevices.SelectedItem = render.FirstOrDefault(d => d.ID == previousOutput) ?? render.FirstOrDefault(IsHeadset);
-            InputDevices.SelectedItem = capture.FirstOrDefault(d => d.ID == previousInput) ?? capture.FirstOrDefault(IsHeadset);
+            OutputDevices.SelectedItem = render.FirstOrDefault(d => d.ID == previousOutput) ?? render.FirstOrDefault(IsHeadset) ?? render.FirstOrDefault();
+            InputDevices.SelectedItem = capture.FirstOrDefault(d => d.ID == previousInput) ?? capture.FirstOrDefault(IsHeadset) ?? capture.FirstOrDefault();
             var found = render.Any(IsHeadset) || capture.Any(IsHeadset);
             DeviceStatus.Text = found
                 ? "H510 Pro detectado nas interfaces de áudio do Windows."
-                : "H510 Pro não encontrado entre os endpoints ativos. Confira a conexão USB e use Atualizar dispositivos.";
+                : "Modo universal: selecione qualquer dispositivo de áudio ativo.";
             Footer.Text = found
                 ? "Dispositivo detectado. Os controles abaixo atuam nos endpoints selecionados, sem mudar o driver."
-                : "Nenhum dispositivo H510 Pro detectado. Outros dispositivos não serão selecionados automaticamente.";
+                : "Modo universal. Confira os dispositivos selecionados antes de ajustar.";
         }
         catch (Exception ex)
         {
@@ -169,6 +169,19 @@ public partial class MainWindow : Window
         catch (Exception ex) { Footer.Text = $"Falha ao ajustar volume: {ex.Message}"; }
     }
 
+    private void Balance_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_updating || _output is null) return;
+        try {
+            var channels = _output.AudioEndpointVolume.Channels;
+            if (channels.Count != 2) { BalanceStatus.Text = "Disponível apenas em saídas estéreo."; return; }
+            var master = Math.Max(channels[0].VolumeLevelScalar, channels[1].VolumeLevelScalar);
+            var b = (float)(BalanceSlider.Value / 100);
+            channels[0].VolumeLevelScalar = master * (1 - Math.Max(0, b));
+            channels[1].VolumeLevelScalar = master * (1 + Math.Min(0, b));
+            BalanceStatus.Text = b == 0 ? "Centro" : $"{Math.Abs(b)*100:0}% para {(b < 0 ? "esquerda" : "direita")}";
+        } catch (Exception ex) { BalanceStatus.Text = ex.Message; }
+    }
     private void MicSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_updating || _input is null) return;
@@ -324,7 +337,8 @@ public partial class MainWindow : Window
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
-            _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value)));
+            if (RawPlayback.IsChecked == true) { _testReader.Volume = .35f; _testPlayer.Init(_testReader); }
+            else _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value)));
             _testPlayer.Play();
         } catch (Exception ex) { TestStatus.Text = ex.Message; }
     }
