@@ -18,7 +18,7 @@
       <StackPanel>
         <StackPanel Name="AudioPanel" Visibility="Collapsed"><TextBlock Name="AudioHeading" Text="Áudio de saída" FontSize="20" FontWeight="SemiBold"/>
         <ComboBox Name="OutputDevices" Height="35" DisplayMemberPath="FriendlyName" SelectionChanged="OutputDevices_SelectionChanged"/>
-        <TextBlock Text="Volume do headset" Margin="0,20,0,2"/>
+        <TextBlock Text="Balanço estéreo (quando suportado)" Margin="0,12,0,2"/><Slider Name="BalanceSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Balance_Changed"/><TextBlock Name="BalanceStatus" Text="Centro"/><TextBlock Text="Volume do headset" Margin="0,20,0,2"/>
         <Slider Name="VolumeSlider" Minimum="0" Maximum="100" TickFrequency="5" ValueChanged="VolumeSlider_ValueChanged"/>
         <TextBlock Name="VolumeLabel" Text="—"/>
         <CheckBox Foreground="White" Name="MuteToggle" Content="Silenciar saída" Checked="MuteToggle_Changed" Unchecked="MuteToggle_Changed" Margin="0,8,0,18"/>
@@ -36,7 +36,7 @@
 <CheckBox Name="CompressorEnabled" Content="Compressor de voz" Foreground="White" IsChecked="True" Margin="0,4"/>
 <TextBlock Text="Presença da voz (dB)"/><Slider Name="Presence" Minimum="-6" Maximum="6" Value="2"/><TextBlock Text="{Binding ElementName=Presence, Path=Value, StringFormat={}{0:0} dB}"/>
 <TextBlock Text="Desative Studio para comparar com o teste anterior. Efeitos aplicados ao clicar em Ouvir teste; não alteram outros aplicativos." TextWrapping="Wrap" Foreground="#AFAFB5"/>
-<WrapPanel Margin="0,16,0,0"><Button Name="RecordButton" Content="Gravar teste (5 s)" Click="Record_Click"/><Button Name="PlayButton" Content="Ouvir teste" Click="Play_Click" IsEnabled="False"/></WrapPanel><TextBlock Name="TestStatus" TextWrapping="Wrap" Margin="0,8,0,0"/></StackPanel><StackPanel Name="SettingsPanel" Visibility="Collapsed"><CheckBox Name="TrayToggle" Content="Minimizar para a bandeja do Windows" Foreground="White" IsChecked="True" Margin="0,0,0,12"/><TextBlock Name="SettingsHeading" Text="Configurações locais" FontSize="18" Margin="0,20,0,8"/><Button Content="Salvar seleção de dispositivos" Click="Save_Click" HorizontalAlignment="Left"/><TextBlock Text="Os efeitos DSP globais ainda não estão disponíveis." Foreground="#AFAFB5" TextWrapping="Wrap" Margin="0,12,0,0"/></StackPanel></StackPanel>
+<CheckBox Name="RawPlayback" Content="Comparar: ouvir áudio original (sem efeitos)" Foreground="White" Margin="0,12,0,0"/><WrapPanel Margin="0,16,0,0"><Button Name="RecordButton" Content="Gravar teste (5 s)" Click="Record_Click"/><Button Name="PlayButton" Content="Ouvir teste" Click="Play_Click" IsEnabled="False"/></WrapPanel><TextBlock Name="TestStatus" TextWrapping="Wrap" Margin="0,8,0,0"/></StackPanel><StackPanel Name="SettingsPanel" Visibility="Collapsed"><CheckBox Name="TrayToggle" Content="Minimizar para a bandeja do Windows" Foreground="White" IsChecked="True" Margin="0,0,0,12"/><TextBlock Name="SettingsHeading" Text="Configurações locais" FontSize="18" Margin="0,20,0,8"/><Button Content="Salvar seleção de dispositivos" Click="Save_Click" HorizontalAlignment="Left"/><TextBlock Text="Os efeitos DSP globais ainda não estão disponíveis." Foreground="#AFAFB5" TextWrapping="Wrap" Margin="0,12,0,0"/></StackPanel></StackPanel>
     </Border>
     <TextBlock Grid.Row="3" Name="Footer" Margin="0,14,0,0" Foreground="#AFAFB5" Text="Controles via Windows Core Audio. Sem alterações no driver ou firmware." TextWrapping="Wrap"/>
   </Grid></ScrollViewer></DockPanel>
