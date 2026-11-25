@@ -180,7 +180,10 @@ public partial class MainWindow : Window
         if (_updating || _testCapture is not null) return;
         try
         {
-            MicMeter.Value = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue * 100;
+            var peak = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue;
+            var db = 20 * Math.Log10(Math.Max(0.000001, peak));
+            MicMeter.Value = Math.Clamp((db + 60) / 60 * 100, 0, 100);
+            PeakDb.Text = $"Pico: {db:0.0} dBFS (escala -60 a 0)";
             if (++_ticks % 14 != 0) return;
             var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
             string signature;
@@ -256,9 +259,9 @@ public partial class MainWindow : Window
         try {
             _testPlayer?.Dispose(); _testReader?.Dispose();
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
-            _testReader.Volume = 0.25f;
+            _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
-            _testPlayer.Init(_testReader);
+            _testPlayer.Init(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20)));
             _testPlayer.Play();
         } catch (Exception ex) { TestStatus.Text = ex.Message; }
     }
@@ -270,5 +273,19 @@ public partial class MainWindow : Window
         _testPlayer?.Dispose(); _testPlayer = null;
         _testReader?.Dispose(); _testReader = null;
         try { System.IO.File.Delete(_testPath); } catch { }
+    }
+    private sealed class TestGainProvider : NAudio.Wave.ISampleProvider
+    {
+        private readonly NAudio.Wave.ISampleProvider source;
+        private readonly float gain;
+        public TestGainProvider(NAudio.Wave.ISampleProvider source, float gain) { this.source = source; this.gain = gain; }
+        public NAudio.Wave.WaveFormat WaveFormat => source.WaveFormat;
+        public int Read(float[] buffer, int offset, int count)
+        {
+            int read = source.Read(buffer, offset, count);
+            for (int i = offset; i < offset + read; i++)
+                buffer[i] = 0.35f * (float)Math.Tanh(buffer[i] * gain);
+            return read;
+        }
     }
 }
