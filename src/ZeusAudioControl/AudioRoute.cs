@@ -13,6 +13,7 @@ internal sealed class AudioRoute(int outputBufferMilliseconds = 40)
     internal AudioTap? After;
     internal RouteBuffer? Buffer;
     internal LocalEq? Eq;
+    internal LiveVoice? Voice;
     internal long Discontinuities;
     internal double CaptureLatencyMilliseconds;
     internal int OutputBufferMilliseconds { get; } = outputBufferMilliseconds;
@@ -70,9 +71,9 @@ internal sealed class AudioRoute(int outputBufferMilliseconds = 40)
         }
         else
         {
-            processed = new TestGainProvider(before, (float)Math.Pow(10, studio.Gain / 20),
-                studio.Enabled, studio.HighPass, studio.Gate, studio.Threshold, studio.Compressor, studio.Presence, studio.Noise,
-                studio.Attack, studio.Hold, studio.Release, studio.CompressorThreshold, studio.Ratio, studio.Shield, studio.AutomaticGain);
+            var voice = new LiveVoice(before, studio);
+            Volatile.Write(ref Voice, voice);
+            processed = voice;
         }
         if (kind == RouteKind.Headphones)
             processed = new RouteDynamics(new PreviewSource(before, processed, () => Volatile.Read(ref bypass) != 0), false, false, .12f);

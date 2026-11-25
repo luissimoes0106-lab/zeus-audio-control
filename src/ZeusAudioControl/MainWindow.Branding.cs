@@ -97,7 +97,7 @@ public partial class MainWindow
     private void AboutZeus_Click(object sender, RoutedEventArgs e)
     {
         var (window, body) = BrandWindow(L("Sobre o ZEUS", "About ZEUS"));
-        body.Children.Add(new TextBlock { Text = "ZEUS Audio Control · Beta 0.7.2", FontWeight = FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = "ZEUS Audio Control · Beta 0.7.3", FontWeight = FontWeights.SemiBold });
         var releases = new Button
         {
             Content = L("Ver versões no GitHub", "View releases on GitHub"),
@@ -203,7 +203,7 @@ public partial class MainWindow
             try
             {
                 using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7.2");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7.3");
                 using var response = await client.GetAsync(
                     "https://api.github.com/repos/luissimoes0106-lab/zeus-audio-control/releases?per_page=30", cancellation.Token);
                 response.EnsureSuccessStatusCode();

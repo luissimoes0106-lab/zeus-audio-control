@@ -49,10 +49,10 @@ public partial class MainWindow : Window
                 UpdateDashboard();
             };
         foreach (var slider in new[] { TestGain, GateThreshold, GateAttack, GateHold, GateRelease,
-            CompressorThreshold, CompressorRatio, Presence, NoiseReduction })
-            slider.ValueChanged += (_, _) => { if (!_applyingStudio) _voiceProfile = "custom"; UpdateDashboard(); };
-        foreach (var box in new[] { StudioEnabled, GateEnabled, HighPass, CompressorEnabled })
-            box.Click += (_, _) => { _voiceProfile = "custom"; UpdateDashboard(); };
+            CompressorThreshold, CompressorRatio, Presence, NoiseReduction, VoiceLimiter })
+            slider.ValueChanged += (_, _) => { if (!_applyingStudio) { _voiceProfile = "custom"; RefreshVoiceRoutes(); } UpdateDashboard(); };
+        foreach (var box in new[] { StudioEnabled, GateEnabled, HighPass, CompressorEnabled, GamingVoiceAgc, VoiceShield })
+            box.Click += (_, _) => { _voiceProfile = "custom"; RefreshVoiceRoutes(); UpdateDashboard(); };
         RouteInput.SelectionChanged += (_, _) => RouteConfirm.IsChecked = false;
         RouteOutput.SelectionChanged += (_, _) => RouteConfirm.IsChecked = false;
         SetupTray();
@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         RestoreStartup();
         RestorePreferences();
         ApplyPreferences();
+        BuildManagedPages();
         _timer.Tick += (_, _) => PollAudio();
         _timer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
@@ -370,11 +371,14 @@ public partial class MainWindow : Window
         MicPanel.Visibility = page == "Microfone" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = page == "Configurações" ? Visibility.Visible : Visibility.Collapsed;
         RoutesPanel.Visibility = page == "Rotas" ? Visibility.Visible : Visibility.Collapsed;
+        MixerPanel.Visibility = page == "Audio Mixer" ? Visibility.Visible : Visibility.Collapsed;
+        ProfilesPanel.Visibility = page == "Meus Perfis" ? Visibility.Visible : Visibility.Collapsed;
+        SmartVoicePanel.Visibility = page == "Smart Voice" ? Visibility.Visible : Visibility.Collapsed;
         MainScroll.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(.82, 1, TimeSpan.FromMilliseconds(130)));
         MainScroll.ScrollToTop();
     }
     private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
-    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value, VoiceShield.IsChecked == true, GamingVoiceAgc.IsChecked == true);
+    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value, VoiceShield.IsChecked == true, GamingVoiceAgc.IsChecked == true, VoiceLimiter.Value / 100);
     private bool _applyingStudio;
     private void ApplyStudio(StudioProfile p)
     {
@@ -396,8 +400,10 @@ public partial class MainWindow : Window
             CompressorRatio.Value = Math.Clamp(p.Ratio, 1, 12);
             VoiceShield.IsChecked = p.Shield;
             GamingVoiceAgc.IsChecked = p.AutomaticGain;
+            VoiceLimiter.Value = double.IsFinite(p.Limiter) ? Math.Clamp(p.Limiter * 100, 5, 35) : 35;
         }
         finally { _applyingStudio = false; }
+        RefreshVoiceRoutes();
     }
 
     private void Preset_Click(object sender, RoutedEventArgs e)
@@ -412,7 +418,7 @@ public partial class MainWindow : Window
             _ => new StudioProfile(6, true, true, true, -45, true, 2, 40, 5, 55, 150, -18, 3)
         });
         UpdateDashboard();
-        StudioStatus.Text = L("Perfil de voz aplicado. Reinicie uma rota de voz ativa para usar esses ajustes.", "Voice profile applied. Restart any active voice route to use these settings.");
+        StudioStatus.Text = L("Perfil de voz aplicado. A automação Smart Voice tem prioridade quando ativa.", "Voice profile applied. Smart Voice automation takes priority when active.");
     }
     private void SaveStudio_Click(object sender, RoutedEventArgs e)
     {
@@ -543,14 +549,14 @@ public partial class MainWindow : Window
 
     private async void Record_Click(object sender, RoutedEventArgs e) => await CaptureTest();
 
-    private async Task<bool> CaptureTest()
+    private async Task<bool> CaptureTest(string? recording = null)
     {
         if (_input is null || _testCapture is not null) return false;
         RecordButton.IsEnabled = PlayButton.IsEnabled = false;
         StopMicrophonePlayback();
         try {
             _testCapture = new NAudio.CoreAudioApi.WasapiCapture(_input);
-            _testWriter = new NAudio.Wave.WaveFileWriter(_testPath, _testCapture.WaveFormat);
+            _testWriter = new NAudio.Wave.WaveFileWriter(recording ?? _testPath, _testCapture.WaveFormat);
             var done = new System.Threading.Tasks.TaskCompletionSource<Exception?>();
             var capture = _testCapture;
             var writer = _testWriter;
@@ -570,7 +576,7 @@ public partial class MainWindow : Window
             if (await done.Task is Exception error) throw error;
             _testCapture?.Dispose(); _testCapture = null;
             _testWriter?.Dispose(); _testWriter = null;
-            PlayButton.IsEnabled = true;
+            PlayButton.IsEnabled = File.Exists(_testPath);
             TestStatus.Text = T("Teste gravado. Ouça com volume baixo. Reprodução pela saída padrão do Windows.");
             return true;
         } catch (Exception ex) { StopTest(); TestStatus.Text = ex.Message; return false; }
@@ -615,21 +621,18 @@ public partial class MainWindow : Window
 
     private void Play_Click(object sender, RoutedEventArgs e) => PlayTest(RawPlayback.IsChecked == true);
 
-    private void PlayTest(bool original, StudioProfile? preview = null)
+    private void PlayTest(bool original, StudioProfile? preview = null, string? recording = null)
     {
         try {
             StopMicrophonePlayback();
-            _testReader = new NAudio.Wave.AudioFileReader(_testPath);
+            _testReader = new NAudio.Wave.AudioFileReader(recording ?? _testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
             if (original) { _testReader.Volume = .35f; _testPlayer.Init(_testReader); }
             else
             {
                 var profile = preview ?? CurrentStudio();
-                _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader,
-                    (float)Math.Pow(10, profile.Gain / 20), profile.Enabled, profile.HighPass, profile.Gate, profile.Threshold,
-                    profile.Compressor, profile.Presence, profile.Noise, profile.Attack, profile.Hold, profile.Release,
-                    profile.CompressorThreshold, profile.Ratio, profile.Shield, profile.AutomaticGain)));
+                _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(LiveVoice.Create(_testReader, profile)));
             }
             var player = _testPlayer;
             player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>

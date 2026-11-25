@@ -19,6 +19,13 @@ public partial class MainWindow
     {
         var (window, body) = BrandWindow("ZEUS Audio Mixer");
         if (sender is FrameworkElement control && Window.GetWindow(control) is { } owner) window.Owner = owner;
+        body.Children.Add(BuildMixerPanel());
+        window.ShowDialog();
+    }
+
+    private StackPanel BuildMixerPanel()
+    {
+        var body = new StackPanel();
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var rows = new StackPanel();
         var scroll = new ScrollViewer { Content = rows, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -44,7 +51,7 @@ public partial class MainWindow
                 var preferences = new Dictionary<string, float>(_intelligence.Sessions, StringComparer.OrdinalIgnoreCase);
                 var previous = seen.ToHashSet();
                 var snapshot = await Task.Run(() => ReadSessions(outputId, preferences, previous));
-                if (!window.IsVisible) return;
+                if (!body.IsVisible) return;
                 seen.UnionWith(snapshot.Select(session => outputId + session.Id));
                 if (seen.Count > 512)
                 {
@@ -60,13 +67,18 @@ public partial class MainWindow
                 rows.Children.Clear();
                 foreach (var session in snapshot) rows.Children.Add(MixerRow(session, outputId));
             }
-            catch (Exception error) { if (window.IsVisible) status.Text = error.Message; }
+            catch (Exception error) { if (body.IsVisible) status.Text = error.Message; }
             finally { busy = false; }
         }
         timer.Tick += async (_, _) => await Refresh();
-        window.Loaded += async (_, _) => { timer.Start(); await Refresh(); };
-        window.Closed += (_, _) => timer.Stop();
-        window.ShowDialog();
+        body.IsVisibleChanged += async (_, _) =>
+        {
+            if (!body.IsVisible) { timer.Stop(); return; }
+            timer.Start();
+            await Refresh();
+        };
+        body.Unloaded += (_, _) => timer.Stop();
+        return body;
     }
 
     private FrameworkElement MixerRow(MixerEntry entry, string endpoint)

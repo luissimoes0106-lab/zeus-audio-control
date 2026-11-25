@@ -29,7 +29,8 @@ public partial class MainWindow
         var pages = new (string Page, FrameworkElement Panel)[]
         {
             ("Visão geral", OverviewPanel), ("Áudio", AudioPanel), ("Microfone", MicPanel),
-            ("Rotas", RoutesPanel), ("Configurações", SettingsPanel)
+            ("Rotas", RoutesPanel), ("Configurações", SettingsPanel),
+            ("Audio Mixer", MixerPanel), ("Meus Perfis", ProfilesPanel), ("Smart Voice", SmartVoicePanel)
         };
         foreach (var size in sizes)
         {

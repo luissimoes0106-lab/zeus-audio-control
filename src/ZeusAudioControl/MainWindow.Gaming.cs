@@ -98,8 +98,8 @@ public partial class MainWindow
             _voiceProfile = "gaming";
             ApplyStudio(GamingVoiceProfile);
             PersistIfChanged();
-            summary.Text = L("Gaming Voice salvo. Reinicie a rota de voz ativa para usar os ajustes.",
-                "Gaming Voice saved. Restart the active voice route to use the settings.");
+            summary.Text = L("Gaming Voice salvo. A automação Smart Voice tem prioridade quando ativa.",
+                "Gaming Voice saved. Smart Voice automation takes priority when active.");
             UpdateDashboard();
         };
         mixer.Click += Mixer_Click;
@@ -171,7 +171,7 @@ public partial class MainWindow
         var rules = _intelligence.Games.ToArray();
         try
         {
-            var match = await Task.Run(() => GamingRules.Match(rules, RunningGames(rules)));
+            var match = await Task.Run(() => GamingRules.Match(rules, RunningExecutables(rules.Select(rule => rule.Executable))));
             if (_closing || revision != _gamingRevision) return;
             var name = Path.GetFileName(match?.Executable);
             if (_gamingDetectedName == name && _gamingDetectedPreset == match?.Preset) return;
@@ -194,9 +194,9 @@ public partial class MainWindow
         UpdatePlaybackEq();
     }
 
-    private static IEnumerable<string> RunningGames(IEnumerable<GamingBinding> bindings)
+    private static IEnumerable<string> RunningExecutables(IEnumerable<string> executables)
     {
-        foreach (var name in bindings.Select(rule => Path.GetFileNameWithoutExtension(rule.Executable)).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var name in executables.Select(Path.GetFileNameWithoutExtension).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var processes = Process.GetProcessesByName(name);
             try
@@ -238,14 +238,45 @@ public partial class MainWindow
             MinHeight = 100, MaxHeight = 260, Text = L("Inspecionando descritores HID…", "Inspecting HID descriptors…")
         };
         var save = new Button { Content = L("Salvar diagnóstico local", "Save local diagnostics"), IsEnabled = false };
+        var consent = new CheckBox { Content = L("Autorizo leitura passiva da coleção HID F100 deste receptor.", "Allow passive reads from this receiver’s F100 HID collection.") };
+        var start = new Button { Content = L("Capturar por até 20 s", "Capture for up to 20 s"), IsEnabled = false };
+        var stop = new Button { Content = L("Cancelar captura", "Cancel capture"), IsEnabled = false };
+        CancellationTokenSource? capture = null;
         body.Children.Add(output);
-        body.Children.Add(save);
+        body.Children.Add(consent);
+        body.Children.Add(new WrapPanel { Children = { start, stop, save } });
+        consent.Click += (_, _) => start.IsEnabled = consent.IsChecked == true && capture is null;
+        stop.Click += (_, _) => capture?.Cancel();
+        start.Click += async (_, _) =>
+        {
+            if (consent.IsChecked != true || capture is not null) return;
+            using var running = new CancellationTokenSource();
+            capture = running;
+            start.IsEnabled = save.IsEnabled = false;
+            stop.IsEnabled = true;
+            output.Text = L("Aguardando relatórios espontâneos…", "Waiting for spontaneous reports…");
+            try
+            {
+                var report = await Task.Run(() => H510Diagnostics.Capture(running.Token));
+                if (!window.IsVisible) return;
+                output.Text = report;
+                save.IsEnabled = true;
+            }
+            catch (Exception error) { if (window.IsVisible) output.Text = error.Message; }
+            finally
+            {
+                capture = null;
+                stop.IsEnabled = false;
+                start.IsEnabled = consent.IsChecked == true;
+            }
+        };
+        window.Closed += (_, _) => capture?.Cancel();
         window.Loaded += async (_, _) =>
         {
             try
             {
                 var report = await Task.Run(H510Diagnostics.Inspect);
-                if (!window.IsVisible) return;
+                if (!window.IsVisible || capture is not null) return;
                 output.Text = report;
                 save.IsEnabled = true;
             }

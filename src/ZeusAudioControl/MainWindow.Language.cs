@@ -73,6 +73,7 @@ public partial class MainWindow
     {
         ["Visão geral"] = "Overview",
         ["Rotas"] = "Routes",
+        ["Meus Perfis"] = "My Profiles",
         ["Áudio"] = "Audio",
         ["Microfone"] = "Microphone",
         ["Configurações"] = "Settings",
@@ -112,6 +113,8 @@ public partial class MainWindow
             Resources["Label" + i] = english ? Labels[i].English : Labels[i].Portuguese;
         PageTitle.Text = T(_page);
         UpdateRouteLabels();
+        Resources["ProfilesNavigation"] = L("Meus Perfis", "My Profiles");
+        Resources["VoiceLimiterLabel"] = L("Teto digital do limitador de voz", "Voice limiter digital ceiling");
         Resources["AboutZeus"] = L("Sobre o ZEUS", "About ZEUS");
         if (_tray?.ContextMenuStrip is { } menu)
         {

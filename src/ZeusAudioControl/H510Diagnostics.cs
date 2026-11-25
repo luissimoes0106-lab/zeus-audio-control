@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -16,11 +17,48 @@ internal static class H510Diagnostics
         var result = new StringBuilder($"H510-PRO · USB 040B:0897 · {DateTimeOffset.Now:O}\n");
         var nodes = UsbNodeCount();
         result.AppendLine(nodes is { } count ? $"Present USB PnP nodes matching VID/PID: {count}" : "USB PnP node count unavailable.");
+        var found = 0;
+        var advertised = false;
+        foreach (var path in ReceiverPaths())
+        {
+            result.AppendLine($"HID collection {++found}");
+            using var handle = CreateFile(path!, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+            var attributes = new HidAttributes { Size = Marshal.SizeOf<HidAttributes>() };
+            if (!handle.IsInvalid && HidD_GetAttributes(handle, ref attributes))
+                result.AppendLine($"  USB ID {attributes.Vendor:X4}:{attributes.Product:X4}, release 0x{attributes.Release:X4}");
+            if (handle.IsInvalid || !HidD_GetPreparsedData(handle, out var descriptor))
+            {
+                result.AppendLine("  HID metadata unavailable.");
+                continue;
+            }
+            try
+            {
+                if (HidP_GetCaps(descriptor, out var caps) != HidSuccess)
+                {
+                    result.AppendLine("  HID capabilities unavailable.");
+                    continue;
+                }
+                result.AppendLine($"  Usage page 0x{caps.Page:X4}, usage 0x{caps.Usage:X4}");
+                result.AppendLine($"  Report sizes: input {caps.InputBytes}, output {caps.OutputBytes}, feature {caps.FeatureBytes}");
+                var input = BatteryUsage(descriptor, 0, caps.InputValues);
+                var feature = BatteryUsage(descriptor, 2, caps.FeatureValues);
+                advertised |= input == true || feature == true;
+                result.AppendLine($"  Battery Strength usage 0006:0020: input {Describe(input)}, feature {Describe(feature)}");
+            }
+            finally { HidD_FreePreparsedData(descriptor); }
+        }
+
+        if (found == 0) result.AppendLine("No present HID collection matched VID/PID. Connect the receiver, turn the headset on, and retry.");
+        if (advertised) result.AppendLine("A standard battery descriptor was advertised. A descriptor does not establish a validated battery percentage.");
+        result.AppendLine("Battery percentage unavailable. Inspection opened descriptor metadata only. No HID input, output or feature report was requested or sent.");
+        return result.ToString();
+    }
+
+    private static IEnumerable<string> ReceiverPaths()
+    {
         HidD_GetHidGuid(out var hid);
         var devices = SetupDiGetClassDevs(ref hid, IntPtr.Zero, IntPtr.Zero, EnumeratePresentInterfaces);
         if (devices == new IntPtr(-1)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-        var found = 0;
-        var advertised = false;
         try
         {
             for (uint index = 0; ; index++)
@@ -29,45 +67,82 @@ internal static class H510Diagnostics
                 if (!SetupDiEnumDeviceInterfaces(devices, IntPtr.Zero, ref hid, index, ref entry))
                 {
                     var error = Marshal.GetLastWin32Error();
-                    if (error == NoMoreItems) break;
+                    if (error == NoMoreItems) yield break;
                     throw new System.ComponentModel.Win32Exception(error);
                 }
                 var path = ReadInterfacePath(devices, ref entry);
-                if (!IsReceiverPath(path)) continue;
-                result.AppendLine($"HID collection {++found}");
-                using var handle = CreateFile(path!, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-                var attributes = new HidAttributes { Size = Marshal.SizeOf<HidAttributes>() };
-                if (!handle.IsInvalid && HidD_GetAttributes(handle, ref attributes))
-                    result.AppendLine($"  USB ID {attributes.Vendor:X4}:{attributes.Product:X4}, release 0x{attributes.Release:X4}");
-                if (handle.IsInvalid || !HidD_GetPreparsedData(handle, out var descriptor))
-                {
-                    result.AppendLine("  HID metadata unavailable.");
-                    continue;
-                }
-                try
-                {
-                    if (HidP_GetCaps(descriptor, out var caps) != HidSuccess)
-                    {
-                        result.AppendLine("  HID capabilities unavailable.");
-                        continue;
-                    }
-                    result.AppendLine($"  Usage page 0x{caps.Page:X4}, usage 0x{caps.Usage:X4}");
-                    result.AppendLine($"  Report sizes: input {caps.InputBytes}, output {caps.OutputBytes}, feature {caps.FeatureBytes}");
-                    var input = BatteryUsage(descriptor, 0, caps.InputValues);
-                    var feature = BatteryUsage(descriptor, 2, caps.FeatureValues);
-                    advertised |= input == true || feature == true;
-                    result.AppendLine($"  Battery Strength usage 0006:0020: input {Describe(input)}, feature {Describe(feature)}");
-                }
-                finally { HidD_FreePreparsedData(descriptor); }
+                if (IsReceiverPath(path)) yield return path!;
             }
         }
         finally { SetupDiDestroyDeviceInfoList(devices); }
-
-        if (found == 0) result.AppendLine("No present HID collection matched VID/PID. Connect the receiver, turn the headset on, and retry.");
-        if (advertised) result.AppendLine("A standard battery descriptor was advertised. A descriptor does not establish a validated battery percentage.");
-        result.AppendLine("Battery percentage unavailable. Inspection opened descriptor metadata only. No HID input, output or feature report was requested or sent.");
-        return result.ToString();
     }
+
+    public static async Task<string> Capture(CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(20));
+        var token = budget.Token;
+        var log = new StringBuilder($"H510-PRO · 040B:0897 · rev 002A · F100:0000\nStarted {DateTimeOffset.UtcNow:O}\n");
+        foreach (var path in ReceiverPaths())
+        {
+            token.ThrowIfCancellationRequested();
+            using var metadata = CreateFile(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+            if (!MatchesPassiveCollection(metadata)) continue;
+
+            const uint genericRead = 0x80000000;
+            const uint overlapped = 0x40000000;
+            using var handle = CreateFile(path, genericRead, 3, IntPtr.Zero, 3, overlapped, IntPtr.Zero);
+            if (handle.IsInvalid)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Shared read-only HID access was refused.");
+            if (!MatchesPassiveCollection(handle)) throw new InvalidDataException("The HID collection changed before capture.");
+            using var reader = new FileStream(handle, FileAccess.Read, 13, isAsync: true);
+            var data = new byte[13];
+            var count = 0;
+            try
+            {
+                while (count < 256)
+                {
+                    var read = await reader.ReadAsync(data.AsMemory(), token).ConfigureAwait(false);
+                    if (read == 0) break;
+                    if (read != data.Length)
+                    {
+                        log.AppendLine($"Incomplete report ({read} bytes) omitted.");
+                        break;
+                    }
+                    count++;
+                    log.AppendLine($"{DateTimeOffset.UtcNow:O}  {Convert.ToHexString(data)}");
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                log.AppendLine(cancellationToken.IsCancellationRequested ? "Cancelled." : "Time limit reached.");
+            }
+            catch (IOException error)
+            {
+                log.AppendLine($"Read stopped: {error.Message}");
+            }
+            log.AppendLine($"Reports: {count}. Battery percentage unavailable; bytes are uninterpreted.");
+            return log.ToString();
+        }
+        return log.AppendLine("Matching receiver collection unavailable. No reports captured.").ToString();
+    }
+
+    private static bool MatchesPassiveCollection(SafeFileHandle handle)
+    {
+        var attributes = new HidAttributes { Size = Marshal.SizeOf<HidAttributes>() };
+        if (handle.IsInvalid || !HidD_GetAttributes(handle, ref attributes) ||
+            attributes.Vendor != 0x040B || attributes.Product != 0x0897 ||
+            !HidD_GetPreparsedData(handle, out var descriptor)) return false;
+        try
+        {
+            return HidP_GetCaps(descriptor, out var caps) == HidSuccess &&
+                IsPassiveTarget(attributes.Release, caps.Page, caps.Usage, caps.InputBytes, caps.OutputBytes, caps.FeatureBytes);
+        }
+        finally { HidD_FreePreparsedData(descriptor); }
+    }
+
+    internal static bool IsPassiveTarget(int release, int page, int usage, int input, int output, int feature) =>
+        release == 0x002A && page == 0xF100 && usage == 0 && input == 13 && output == 65 && feature == 0;
 
     internal static bool IsReceiverPath(string? path)
     {

@@ -13,6 +13,7 @@ public partial class MainWindow
     private sealed record ActiveRoute(AudioRoute Audio, RouteEndpoints Endpoints, StudioProfile Studio, bool Compressor, bool SmartVolume)
     {
         public bool Running { get; set; }
+        public StudioProfile? AppliedVoice { get; set; } = Studio;
     }
 
     private readonly Dictionary<RouteKind, ActiveRoute> _routes = new();
@@ -176,6 +177,8 @@ public partial class MainWindow
                     if (SelectedRouteKind == kind) RouteStatus.Text = L("Rota ativa", "Route active");
                     UpdatePlaybackEq();
                     PollForeground();
+                    RefreshVoiceRoutes();
+                    PollSmartVoice();
                     UpdateDashboard();
                 }));
             if (!_closing && SelectedRouteKind == kind)
@@ -193,6 +196,8 @@ public partial class MainWindow
         finally
         {
             _routes.Remove(kind);
+            if (kind == RouteKind.Microphone) { _voiceRevision++; _activeVoicePreset = null; }
+            if (!_closing) RefreshVoiceRoutes();
             if (!_closing) PollForeground();
             if (!_closing)
             {
@@ -266,7 +271,7 @@ public partial class MainWindow
         }
         else
         {
-            var studio = voice is { Running: true } ? voice.Studio : CurrentStudio();
+            var studio = voice is { Running: true } ? voice.AppliedVoice ?? voice.Studio : CurrentStudio();
             effects = studio.Enabled
                 ? string.Join(" · ", new[]
                 {
@@ -284,7 +289,7 @@ public partial class MainWindow
         {
             if (voice.Endpoints.Kind == RouteKind.Headphones && MonitorOriginal.IsChecked == true)
                 effects = L("Original com limite de monitoramento", "Original with monitor level cap");
-            else if (voice.Studio.Shield && voice.Studio.Enabled)
+            else if ((voice.AppliedVoice ?? voice.Studio) is { Shield: true, Enabled: true })
                 effects += " · Voice Shield";
         }
         var gaming = _gamingManualEq is not null ? " · Gaming (manual)" : _gamingDetectedName is { } game ? $" · Gaming ({game})" : "";
@@ -295,7 +300,10 @@ public partial class MainWindow
     {
         var selected = SelectedRoute;
         var visible = _page == "Rotas" && IsVisible;
-        foreach (var active in _routes.Values) active.Audio.SetTelemetry(visible && active == selected);
+        var smart = _page == "Smart Voice" && IsVisible;
+        foreach (var active in _routes.Values)
+            active.Audio.SetTelemetry(visible && active == selected || smart && active.Endpoints.Kind == RouteKind.Microphone);
+        if (smart) PollSmartVoiceMeters();
         if (!visible || selected is not { Running: true }) return;
         var route = selected.Audio;
         var before = Volatile.Read(ref route.Before);

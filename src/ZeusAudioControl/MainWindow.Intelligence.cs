@@ -15,6 +15,8 @@ public partial class MainWindow
     private sealed class IntelligenceSettings
     {
         public bool Automation { get; set; }
+        public bool VoiceAutomation { get; set; }
+        public List<VoiceAssociation> VoiceAssociations { get; set; } = [];
         public bool GamingAuto { get; set; }
         public bool GamingLowLatency { get; set; }
         public List<GamingBinding> Games { get; set; } = [];
@@ -156,6 +158,7 @@ public partial class MainWindow
         }
         PollForeground();
         PollGaming();
+        PollSmartVoice();
     }
 
     private void PollForeground()

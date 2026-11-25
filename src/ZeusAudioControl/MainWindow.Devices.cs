@@ -95,23 +95,45 @@ public partial class MainWindow
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Text = L("Coletando diagnóstico…", "Collecting diagnostics…") };
         var save = new Button { Content = L("Salvar relatório local", "Save local report"), IsEnabled = false };
         body.Children.Add(report);
-        body.Children.Add(save);
-        var outId = _output?.ID;
-        var inId = _input?.ID;
-        var preferredOut = _preferredOutput;
-        var preferredIn = _preferredInput;
+        var prefer = new Button { Content = L("Usar seleções atuais como preferenciais", "Save current selections as preferred") };
+        body.Children.Add(new WrapPanel { Children = { save, prefer } });
         var measures = PeakDb.Text;
         var routes = string.Join(Environment.NewLine, _routes.Values.Select(active =>
             $"{active.Endpoints.Kind}: {active.Endpoints.Input} -> {active.Endpoints.Output}; " +
             $"state={(active.Running ? "running" : "starting")}, underruns={active.Audio.Buffer?.Underflows}, " +
             $"drops={active.Audio.Buffer?.Overflows}, discontinuities={Interlocked.Read(ref active.Audio.Discontinuities)}"));
         var history = string.Join(Environment.NewLine, _intelligence.Disconnects.TakeLast(10));
-        window.Loaded += async (_, _) =>
+        async Task RefreshReport()
         {
-            var diagnostics = await Task.Run(() => DescribeAudio(outId, inId, preferredOut, preferredIn));
-            if (!window.IsVisible) return;
-            report.Text = $"{diagnostics}\n{measures}\n{routes}\n{history}";
-            save.IsEnabled = true;
+            var outId = _output?.ID;
+            var inId = _input?.ID;
+            var preferredOut = _preferredOutput;
+            var preferredIn = _preferredInput;
+            prefer.IsEnabled = save.IsEnabled = false;
+            try
+            {
+                var diagnostics = await Task.Run(() => DescribeAudio(outId, inId, preferredOut, preferredIn));
+                if (!window.IsVisible) return;
+                report.Text = $"{diagnostics}\n{measures}\n{routes}\n{history}";
+                save.IsEnabled = true;
+            }
+            catch (Exception error) { if (window.IsVisible) report.Text = error.Message; }
+            finally { prefer.IsEnabled = _output is not null || _input is not null; }
+        }
+        window.Loaded += async (_, _) => await RefreshReport();
+        prefer.Click += async (_, _) =>
+        {
+            var output = _output?.ID ?? _preferredOutput;
+            var input = _input?.ID ?? _preferredInput;
+            try
+            {
+                ProfileFile.Write(_settingsPath, new[] { output, input });
+                _preferredOutput = output;
+                _preferredInput = input;
+                _savedSettings = null;
+                await RefreshReport();
+            }
+            catch (Exception error) { report.Text = error.Message; }
         };
         save.Click += async (_, _) =>
         {
@@ -131,23 +153,47 @@ public partial class MainWindow
         try
         {
             using var devices = new MMDeviceEnumerator();
-            foreach (var (selected, preferred, label) in new[] { (output, preferredOutput, "Output"), (input, preferredInput, "Input") })
+            foreach (var (selected, preferred, label, flow) in new[]
+                     {
+                         (output, preferredOutput, "Output", DataFlow.Render),
+                         (input, preferredInput, "Input", DataFlow.Capture)
+                     })
             {
-                if (preferred is not null && preferred != selected)
-                    text.AppendLine($"{label}: preferred endpoint disconnected; verify the physical connection.");
-                if (selected is null) { text.AppendLine($"{label}: unavailable; select a Windows endpoint."); continue; }
+                text.AppendLine(label);
+                text.AppendLine($"  ZEUS selection: {EndpointDescription(devices, selected)}");
+                text.AppendLine($"  Saved preference: {EndpointDescription(devices, preferred)}");
+                foreach (var role in new[] { Role.Multimedia, Role.Communications })
+                {
+                    try
+                    {
+                        using var standard = devices.GetDefaultAudioEndpoint(flow, role);
+                        text.AppendLine($"  Windows default ({role}): {standard.FriendlyName}");
+                    }
+                    catch (ExternalException) { text.AppendLine($"  Windows default ({role}): unavailable"); }
+                }
+                if (selected is null) continue;
                 using var endpoint = devices.GetDevice(selected);
-                text.AppendLine($"{label}: {endpoint.FriendlyName} · {endpoint.State} · {Transport(endpoint.ID)}");
                 if (endpoint.State != DeviceState.Active) continue;
                 using var audio = endpoint.AudioClient;
                 var mix = audio.MixFormat;
-                text.AppendLine($"  {mix.SampleRate} Hz · {mix.Channels} ch · {mix.BitsPerSample} bit · mask 0x{ChannelLayout.GetMask(mix):X}");
-                if (endpoint.AudioEndpointVolume.Mute) text.AppendLine("  Endpoint muted; check its mute control.");
+                text.AppendLine($"  Selected mix: {mix.SampleRate} Hz · {mix.Channels} ch · {mix.BitsPerSample} bit · mask 0x{ChannelLayout.GetMask(mix):X}");
+                if (endpoint.AudioEndpointVolume.Mute) text.AppendLine("  Selected endpoint muted.");
             }
         }
         catch (Exception error) { text.AppendLine(error.Message); }
         text.AppendLine("For virtual routes, verify distinct cable endpoints and use standard buffering if interruptions increase.");
         return text.ToString();
+    }
+
+    private static string EndpointDescription(MMDeviceEnumerator devices, string? id)
+    {
+        if (id is null) return "none";
+        try
+        {
+            using var endpoint = devices.GetDevice(id);
+            return $"{endpoint.FriendlyName} · {endpoint.State} · {Transport(endpoint.ID)}";
+        }
+        catch (ExternalException) { return "saved ID not currently resolved by Windows"; }
     }
 
     private static uint AudioServiceState()

@@ -3,6 +3,46 @@ using ZeusAudioControl;
 
 var tests = new (string, Action)[]
 {
+    ("Passive HID capture accepts only the observed receiver collection", () =>
+    {
+        Check(H510Diagnostics.IsPassiveTarget(0x2A, 0xF100, 0, 13, 65, 0));
+        Check(!H510Diagnostics.IsPassiveTarget(0x2B, 0xF100, 0, 13, 65, 0));
+        Check(!H510Diagnostics.IsPassiveTarget(0x2A, 0x0C, 1, 3, 0, 0));
+        Check(!H510Diagnostics.IsPassiveTarget(0x2A, 0xF100, 0, 13, 65, 1));
+    }),
+    ("Smart Voice preserves 18 percent suppression and respects priority", () =>
+    {
+        var baseline = new StudioProfile(4, true, true, true, -46, true, 2, 18, Limiter: .3);
+        Check(VoiceRules.Preset("discord", baseline) is { Noise: 18, Limiter: .3, AutomaticGain: true });
+        Check(VoiceRules.Preset("custom", baseline) == baseline);
+        var links = new[] { new VoiceAssociation("C:/one.exe", "obs", 1), new VoiceAssociation("C:/two.exe", "meet", 9) };
+        Check(VoiceRules.Match(links, ["C:/one.exe", "c:/TWO.exe"])?.Preset == "meet");
+        Check(VoiceRules.Match(links, ["D:/two.exe"]) is null);
+    }),
+    ("Four-stage calibration uses all speech levels and refuses clipping", () =>
+    {
+        var baseline = new StudioProfile(4, true, true, true, -46, true, 2, 18);
+        VoiceMeasurement[] measures = [new(-60, -50), new(-38, -30), new(-27, -18), new(-18, -9)];
+        var result = VoiceRules.Calibrate(baseline, measures);
+        Check(result.Gain == 3 && result.Threshold == -52 && result.Noise == 18 && result.Limiter <= .35);
+        measures[3] = new(-18, 0);
+        try { VoiceRules.Calibrate(baseline, measures); }
+        catch (InvalidOperationException) { return; }
+        throw new Exception("Calibration accepted clipping.");
+    }),
+    ("Live voice switches limiter on the same stream after a short fade", () =>
+    {
+        var profile = new StudioProfile(0, false, false, false, -45, false, 0);
+        var source = new Signal(1, _ => 1);
+        var voice = new LiveVoice(source, profile);
+        var data = new float[4800];
+        Check(voice.Read(data, 0, data.Length) == data.Length);
+        var original = data[^1];
+        voice.Set(profile with { Limiter = .20 });
+        Check(voice.Read(data, 0, data.Length) == data.Length);
+        Check(Math.Abs(data[0] - original) < .0001);
+        Check(data[^1] < .20 && data[^1] > .14);
+    }),
     ("Gaming presets differ and an exited game restores the prior profile", () =>
     {
         var fps = GamingRules.Preset("fps");

@@ -12,6 +12,7 @@
     <Compile Include="../../src/ZeusAudioControl/UpdateFiles.cs" Link="UpdateFiles.cs" />
     <Compile Include="../../src/ZeusAudioControl/IntelligenceRules.cs" Link="IntelligenceRules.cs" />
     <Compile Include="../../src/ZeusAudioControl/GamingRules.cs" Link="GamingRules.cs" />
+    <Compile Include="../../src/ZeusAudioControl/VoiceRules.cs" Link="VoiceRules.cs" />
     <Compile Include="../../src/ZeusAudioControl/H510Diagnostics.cs" Link="H510Diagnostics.cs" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
   </ItemGroup>

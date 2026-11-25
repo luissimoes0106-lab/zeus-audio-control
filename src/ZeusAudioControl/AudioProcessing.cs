@@ -82,6 +82,7 @@ internal sealed class TestGainProvider : ISampleProvider
 {
     private readonly ISampleProvider source;
     private readonly float gain;
+    private readonly float ceiling;
     private readonly bool studio, gate, compressor;
     private readonly float threshold, attack, release;
     private readonly float compressorThreshold, compressorExponent;
@@ -97,8 +98,9 @@ internal sealed class TestGainProvider : ISampleProvider
     private readonly float[]? speechGain;
     private readonly float gainAttack, gainRelease;
     public TestGainProvider(ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise,
-        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3, bool shield = false, bool automaticGain = false)
+        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3, bool shield = false, bool automaticGain = false, double limiter = .35)
     {
+        ceiling = double.IsFinite(limiter) ? (float)Math.Clamp(limiter, .05, .35) : .35f;
         this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
         threshold = (float)Math.Pow(10, thresholdDb / 20);
         int rate = source.WaveFormat.SampleRate, channels = source.WaveFormat.Channels;
@@ -172,10 +174,76 @@ internal sealed class TestGainProvider : ISampleProvider
                 if (compressor && compressedLevel > compressorThreshold)
                     v *= (float)Math.Pow(compressorThreshold / compressedLevel, compressorExponent);
             }
-            buffer[i] = .35f * (float)Math.Tanh(v * gain);
+            buffer[i] = ceiling * (float)Math.Tanh(v * gain);
             channel = (channel + 1) % WaveFormat.Channels;
         }
         return read;
+    }
+}
+
+internal sealed class LiveVoice : ISampleProvider
+{
+    private readonly ISampleProvider source;
+    private readonly BlockInput input;
+    private TestGainProvider current;
+    private TestGainProvider? previous;
+    private StudioProfile? pending;
+    private float[] old = [];
+    private int fade;
+    private readonly int fadeLength;
+
+    public LiveVoice(ISampleProvider source, StudioProfile profile)
+    {
+        this.source = source;
+        input = new BlockInput(source.WaveFormat);
+        current = Create(input, profile);
+        fadeLength = Math.Max(1, WaveFormat.SampleRate * WaveFormat.Channels / 20);
+    }
+
+    public WaveFormat WaveFormat => source.WaveFormat;
+
+    public static TestGainProvider Create(ISampleProvider source, StudioProfile p) =>
+        new(source, (float)Math.Pow(10, p.Gain / 20), p.Enabled, p.HighPass, p.Gate, p.Threshold, p.Compressor,
+            p.Presence, p.Noise, p.Attack, p.Hold, p.Release, p.CompressorThreshold, p.Ratio, p.Shield, p.AutomaticGain, p.Limiter);
+
+    public void Set(StudioProfile profile) => Interlocked.Exchange(ref pending, profile);
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        if (fade == 0 && Interlocked.Exchange(ref pending, null) is { } profile)
+        {
+            previous = current;
+            current = Create(input, profile);
+            fade = fadeLength;
+        }
+        var read = source.Read(buffer, offset, count);
+        input.Block = buffer;
+        input.Offset = offset;
+        if (previous is { } prior)
+        {
+            var overlap = Math.Min(read, fade);
+            if (old.Length < overlap) old = new float[overlap];
+            prior.Read(old, 0, overlap);
+            current.Read(buffer, offset, read);
+            for (var i = 0; i < overlap; i++)
+                buffer[offset + i] += (old[i] - buffer[offset + i]) * ((float)fade-- / fadeLength);
+            if (fade == 0) previous = null;
+        }
+        else current.Read(buffer, offset, read);
+        input.Block = [];
+        return read;
+    }
+
+    private sealed class BlockInput(WaveFormat format) : ISampleProvider
+    {
+        public float[] Block = [];
+        public int Offset;
+        public WaveFormat WaveFormat => format;
+        public int Read(float[] buffer, int offset, int count)
+        {
+            if (buffer != Block || offset != Offset) Array.Copy(Block, Offset, buffer, offset, count);
+            return count;
+        }
     }
 }
 

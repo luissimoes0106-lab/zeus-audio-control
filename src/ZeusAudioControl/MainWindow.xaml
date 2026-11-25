@@ -57,6 +57,9 @@
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label1}" Click="Audio_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label2}" Click="Microphone_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource RoutesTitle}" Click="Routes_Click" Margin="0,0,0,10"/>
+        <Button Style="{StaticResource Nav}" Content="Audio Mixer" Click="MixerPage_Click" Margin="0,0,0,10"/>
+        <Button Style="{StaticResource Nav}" Content="{DynamicResource ProfilesNavigation}" Click="ProfilesPage_Click" Margin="0,0,0,10"/>
+        <Button Style="{StaticResource Nav}" Content="Smart Voice" Click="SmartVoice_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="Intelligence Pack" Click="Intelligence_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="ZEUS Quick Control" Click="QuickControl_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource AboutZeus}" Click="AboutZeus_Click" Margin="0,0,0,10"/>
@@ -244,6 +247,9 @@
                 <TextBlock Text="{DynamicResource Ratio}"/>
                 <Slider Name="CompressorRatio" Minimum="1" Maximum="12" Value="3" ToolTip="{DynamicResource Ratio}"/>
                 <TextBlock Text="{Binding ElementName=CompressorRatio, Path=Value, StringFormat={}{0:0.0} :1}"/>
+                <TextBlock Text="{DynamicResource VoiceLimiterLabel}"/>
+                <Slider Name="VoiceLimiter" Minimum="5" Maximum="35" Value="35"/>
+                <TextBlock Text="{Binding ElementName=VoiceLimiter, Path=Value, StringFormat={}{0:0}% FS}"/>
                 <TextBlock Text="{DynamicResource Label43}"/>
                 <Slider Name="Presence" Minimum="-6" Maximum="6" Value="2"/>
                 <TextBlock Text="{Binding ElementName=Presence, Path=Value, StringFormat={}{0:0} dB}"/>
@@ -302,6 +308,9 @@
                 </StackPanel>
               </Border>
             </StackPanel>
+            <StackPanel Name="MixerPanel" Visibility="Collapsed"/>
+            <StackPanel Name="ProfilesPanel" Visibility="Collapsed"/>
+            <StackPanel Name="SmartVoicePanel" Visibility="Collapsed"/>
             <StackPanel Name="SettingsPanel" Visibility="Collapsed">
               <CheckBox Name="AdvancedToggle" Content="{DynamicResource Label48}" IsChecked="True" Foreground="White" Click="Preferences_Click" Margin="0,0,0,8"/>
               <CheckBox Name="EnglishToggle" Content="English" Foreground="White" Click="Preferences_Click" Margin="0,0,0,8"/>
