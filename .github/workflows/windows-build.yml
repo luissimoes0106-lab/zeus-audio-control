@@ -83,10 +83,8 @@ jobs:
           $shell = New-Object -ComObject WScript.Shell
           foreach ($link in @($shortcut, $desktop, $oldShortcut)) {
             $previous = $shell.CreateShortcut($link)
-            $previous.TargetPath = "$env:WINDIR\System32
-otepad.exe"
-            $previous.IconLocation = "$env:WINDIR\System32
-otepad.exe,0"
+            $previous.TargetPath = "$env:WINDIR\System32\notepad.exe"
+            $previous.IconLocation = "$env:WINDIR\System32\notepad.exe,0"
             $previous.Save()
           }
           $installer = Start-Process dist/ZEUS-Audio-Control-Beta-0.7-Setup-x64.exe -ArgumentList '/S' -Wait -PassThru
