@@ -6,6 +6,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ZeusAudioControl</AssemblyName>
+    <Product>ZEUS Audio Control</Product>
+    <Description>Independent Windows audio endpoint controls and local microphone testing.</Description>
+    <Company>ZEUS Audio Control open-source project</Company>
+    <Copyright>ZEUS Audio Control contributors</Copyright>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
