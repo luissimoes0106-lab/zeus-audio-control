@@ -36,7 +36,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        MigrateBeta04Settings();
+        MigrateEarlierSettings();
         SetupEq();
         foreach (var slider in _bands.Concat([BassBoost, LowTone, MidTone, HighTone]))
             slider.ValueChanged += (_, _) =>
@@ -92,6 +92,7 @@ public partial class MainWindow : Window
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Abrir ZEUS", null, (_, _) => Dispatcher.Invoke(RestoreWindow));
         menu.Items.Add("Sair", null, (_, _) => Dispatcher.Invoke(Close));
+        menu.Items.Add("ZEUS Quick Control", null, (_, _) => Dispatcher.Invoke(() => QuickControl_Click(this, new RoutedEventArgs())));
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => Dispatcher.Invoke(RestoreWindow);
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized && TrayToggle.IsChecked == true) Hide(); };
@@ -331,7 +332,7 @@ public partial class MainWindow : Window
     private readonly string _testPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "zeus-" + Guid.NewGuid().ToString("N") + ".wav");
     private readonly string _settingsPath = Path.Combine(
         Environment.GetEnvironmentVariable("ZEUS_UI_SMOKE_PROFILE") ??
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZeusAudioControl", "Beta05"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZeusAudioControl", "Beta07"),
         "devices.json");
     private void Overview_Click(object sender, RoutedEventArgs e) => Navigate("Visão geral");
     private void Audio_Click(object sender, RoutedEventArgs e) => Navigate("Áudio");
@@ -453,14 +454,15 @@ public partial class MainWindow : Window
     private string PreferencesPath => Path.Combine(Path.GetDirectoryName(_settingsPath)!, "preferences.json");
     private Preferences CurrentPreferences() => new(TrayToggle.IsChecked == true, AdvancedToggle.IsChecked == true, EnglishToggle.IsChecked == true, _eqProfile, _voiceProfile);
 
-    private void MigrateBeta04Settings()
+    private void MigrateEarlierSettings()
     {
         if (Environment.GetEnvironmentVariable("ZEUS_UI_SMOKE_PROFILE") is not null) return;
         var directory = Path.GetDirectoryName(_settingsPath)!;
         var previous = Path.GetDirectoryName(directory)!;
         foreach (var file in new[] { "devices.json", "studio.json", "eq.json", "aliases.json", "preferences.json" })
         {
-            var oldPath = Path.Combine(previous, file);
+            var oldPath = Path.Combine(previous, "Beta05", file);
+            if (!File.Exists(oldPath)) oldPath = Path.Combine(previous, file);
             var newPath = Path.Combine(directory, file);
             try
             {
@@ -663,8 +665,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Footer.Text = ex.Message; }
     }
-    private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControlBeta05") is string; } catch { } }
-    private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControlBeta05","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControlBeta05",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
+    private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControlBeta07") is string; } catch { } }
+    private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControlBeta07","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControlBeta07",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
     private void Export_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -716,7 +718,7 @@ public partial class MainWindow : Window
             ProfileFile.Write(AliasPath, new Dictionary<string, string>());
             _aliases.Clear();
             using var startup = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            startup?.DeleteValue("ZeusAudioControlBeta05", throwOnMissingValue: false);
+            startup?.DeleteValue("ZeusAudioControlBeta07", throwOnMissingValue: false);
             AutoStart.IsChecked = false;
             _preferredOutput = _preferredInput = null;
             TrayToggle.IsChecked = AdvancedToggle.IsChecked = true;

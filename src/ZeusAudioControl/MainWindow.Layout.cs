@@ -7,6 +7,13 @@ public partial class MainWindow
 {
     internal void VerifyLayout()
     {
+        if (OfficialLogo.Source is not System.Windows.Media.Imaging.BitmapSource logo || logo.PixelWidth != logo.PixelHeight ||
+            Icon is not System.Windows.Media.Imaging.BitmapSource)
+            throw new InvalidOperationException("Official branding resources did not load.");
+        var (brandingDialog, _) = BrandWindow("ZEUS Quick Control");
+        brandingDialog.ApplyTemplate();
+        if (brandingDialog.Icon is null) throw new InvalidOperationException("Branded dialog icon did not load.");
+        brandingDialog.Close();
         var sizes = new[] { new Size(630, 500), new Size(860, 620), new Size(1180, 760) };
         var pages = new (string Page, FrameworkElement Panel)[]
         {

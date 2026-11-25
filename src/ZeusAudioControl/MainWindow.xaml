@@ -49,22 +49,19 @@
   </Window.Resources>
   <DockPanel>
     <Border DockPanel.Dock="Left" Width="142" Background="#17171D" Padding="13">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
-        <Viewbox Width="54" Height="54" HorizontalAlignment="Left" Margin="0,0,0,12">
-          <Canvas Width="64" Height="64">
-            <Rectangle Width="64" Height="64" RadiusX="14" RadiusY="14" Fill="#D73939"/>
-            <Path Fill="White" Data="M 13,13 H 49 L 29,30 H 43 L 21,53 L 27,39 H 15 L 33,22 H 13 Z"/>
-            <Path Stroke="#FFD1D7" StrokeThickness="2" Data="M 51,28 V 36 M 55,25 V 39 M 59,29 V 35"/>
-          </Canvas>
-        </Viewbox>
-        <TextBlock Text="ZEUS AUDIO" FontWeight="Bold" Foreground="#F04444" FontSize="16" Margin="0,0,0,8"/>
-        <TextBlock Text="BETA 0.5" Foreground="#9BA3B6" FontSize="11" Margin="0,0,0,30"/>
+        <Image Name="OfficialLogo" Source="ZEUS-Logo.png" Stretch="Uniform" Width="110" Height="110"
+               HorizontalAlignment="Center" Margin="0,0,0,12" AutomationProperties.Name="ZEUS Audio Control"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label0}" Click="Overview_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label1}" Click="Audio_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label2}" Click="Microphone_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource RoutesTitle}" Click="Routes_Click" Margin="0,0,0,10"/>
+        <Button Style="{StaticResource Nav}" Content="ZEUS Quick Control" Click="QuickControl_Click" Margin="0,0,0,10"/>
+        <Button Style="{StaticResource Nav}" Content="{DynamicResource AboutZeus}" Click="AboutZeus_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label3}" Click="Settings_Click" Margin="0,0,0,10"/>
       </StackPanel>
+      </ScrollViewer>
     </Border>
     <ScrollViewer Name="MainScroll" VerticalScrollBarVisibility="Auto">
       <Grid Margin="18" MaxWidth="1140">

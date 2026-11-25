@@ -2,7 +2,7 @@ name: Windows build
 on:
   push:
     branches: [main, 'feature/**']
-    tags: ['v0.5.0-beta*']
+    tags: ['v0.7.0-beta*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -49,11 +49,11 @@ jobs:
           cp LICENSE dist/portable/
           cp -r licenses dist/portable/
           cd dist/portable
-          zip -qr ../ZEUS-Audio-Control-Beta-0.5-Portable-x64.zip ZeusAudioControl.exe LICENSE licenses
+          zip -qr ../ZEUS-Audio-Control-Beta-0.7-Portable-x64.zip ZeusAudioControl.exe LICENSE licenses
           cd ..
-          sha256sum ZEUS-Audio-Control-Beta-0.5-{Portable-x64.zip,Setup-x64.exe} > SHA256SUMS.txt
+          sha256sum ZEUS-Audio-Control-Beta-0.7-{Portable-x64.zip,Setup-x64.exe} > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
-          unzip -t ZEUS-Audio-Control-Beta-0.5-Portable-x64.zip
+          unzip -t ZEUS-Audio-Control-Beta-0.7-Portable-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ZeusAudioControl-win-x64
@@ -74,15 +74,34 @@ jobs:
       - name: Install and uninstall for the current user
         shell: pwsh
         run: |
-          $install = Join-Path $env:LOCALAPPDATA 'Programs\ZEUS Audio Control Beta 0.5'
+          $install = Join-Path $env:LOCALAPPDATA 'Programs\ZEUS Audio Control Beta 0.7'
           $app = Join-Path $install 'ZeusAudioControl.exe'
           $uninstaller = Join-Path $install 'Uninstall.exe'
-          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'ZEUS Audio Control Beta 0.5.lnk'
-          $installer = Start-Process dist/ZEUS-Audio-Control-Beta-0.5-Setup-x64.exe -ArgumentList '/S' -Wait -PassThru
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'ZEUS Audio Control.lnk'
+          $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'ZEUS Audio Control.lnk'
+          $oldShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'ZEUS Audio Control Beta 0.5.lnk'
+          $shell = New-Object -ComObject WScript.Shell
+          foreach ($link in @($shortcut, $desktop, $oldShortcut)) {
+            $previous = $shell.CreateShortcut($link)
+            $previous.TargetPath = "$env:WINDIR\System32
+otepad.exe"
+            $previous.IconLocation = "$env:WINDIR\System32
+otepad.exe,0"
+            $previous.Save()
+          }
+          $installer = Start-Process dist/ZEUS-Audio-Control-Beta-0.7-Setup-x64.exe -ArgumentList '/S' -Wait -PassThru
           if ($installer.ExitCode -ne 0 -or !(Test-Path $app) -or !(Test-Path $shortcut)) {
             throw "Installation did not produce the executable and Start menu shortcut"
           }
-          Expand-Archive dist/ZEUS-Audio-Control-Beta-0.5-Portable-x64.zip -DestinationPath portable
+          if (Test-Path $oldShortcut) { throw "Legacy shortcut was not migrated" }
+          foreach ($link in @($shortcut, $desktop)) {
+            if (!(Test-Path $link)) { throw "Missing shortcut: $link" }
+            $info = $shell.CreateShortcut($link)
+            if ($info.TargetPath -ne $app -or $info.IconLocation -ne "$app,0") {
+              throw "Shortcut target or icon is incorrect: $link"
+            }
+          }
+          Expand-Archive dist/ZEUS-Audio-Control-Beta-0.7-Portable-x64.zip -DestinationPath portable
           if ((Get-FileHash $app).Hash -ne (Get-FileHash portable/ZeusAudioControl.exe).Hash) {
             throw "Installed executable differs from the portable executable"
           }
@@ -106,7 +125,7 @@ jobs:
           }
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v0.5.0-beta')
+    if: startsWith(github.ref, 'refs/tags/v0.7.0-beta')
     needs: install-smoke
     runs-on: ubuntu-latest
     permissions:
@@ -125,5 +144,5 @@ jobs:
           if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --repo "$REPOSITORY" --clobber
           else
-            gh release create "$TAG" dist/* --repo "$REPOSITORY" --verify-tag --draft --prerelease --title 'ZEUS Audio Control Beta 0.5' --notes 'Windows 10/11 x64. The installer and portable executable are unsigned. Verify SHA256SUMS.txt before opening.'
+            gh release create "$TAG" dist/* --repo "$REPOSITORY" --verify-tag --draft --prerelease --title 'ZEUS Audio Control Beta 0.7' --notes 'Windows 10/11 x64. The installer and portable executable are unsigned. Verify SHA256SUMS.txt before opening.'
           fi

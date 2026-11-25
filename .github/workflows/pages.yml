@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [docs/index.html, .github/workflows/pages.yml]
+    paths: [docs/index.html, src/ZeusAudioControl/Zeus.ico, src/ZeusAudioControl/ZEUS-Logo.png, .github/workflows/pages.yml]
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - run: mkdir -p _site && cp docs/index.html _site/index.html
+      - run: mkdir -p _site && cp docs/index.html _site/index.html && cp src/ZeusAudioControl/ZEUS-Logo.png _site/ && cp src/ZeusAudioControl/Zeus.ico _site/ZEUS.ico
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

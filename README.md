@@ -1,12 +1,12 @@
-# ZEUS Audio Control Beta 0.5
+# ZEUS Audio Control Beta 0.7
 
-Aplicativo offline, gratuito e de código aberto para controlar e processar áudio no Windows. A Beta 0.5 inclui um painel de dispositivos, equalizador de dez bandas, controles de voz, rotas WASAPI e diagnóstico de latência. Licença MIT.
+Aplicativo offline, gratuito e de código aberto para controlar e processar áudio no Windows. A Beta 0.7 inclui um painel de dispositivos, equalizador de dez bandas, controles de voz, rotas WASAPI e diagnóstico de latência. Licença MIT.
 
 ## Instalação e recuperação
 
 Requer Windows 10 ou 11 x64. O instalador é por usuário. A versão portátil é um ZIP com o executável e o runtime .NET incluído. Os executáveis da beta não têm assinatura Authenticode. Confira o SHA-256 da distribuição e mantenha as proteções do Windows ativas.
 
-A Beta 0.5 tem pasta, atalhos e opção de inicialização próprios. No primeiro uso, ela copia as configurações existentes da Beta 0.4 para `%LOCALAPPDATA%\ZeusAudioControl\Beta05`. A Beta 0.4 permanece disponível no [pré-lançamento v0.4.0-beta.1](https://github.com/luissimoes0106-lab/zeus-audio-control/releases/tag/v0.4.0-beta.1) ou na [execução que gerou seus pacotes](https://github.com/luissimoes0106-lab/zeus-audio-control/actions/runs/45536265411).
+A Beta 0.7 usa o atalho **ZEUS Audio Control** e uma pasta de instalação própria. No primeiro uso, ela copia os dados da Beta 0.5, com fallback para a Beta 0.4, para `%LOCALAPPDATA%\ZeusAudioControl\Beta07`. A Beta 0.4 permanece disponível no [pré-lançamento v0.4.0-beta.1](https://github.com/luissimoes0106-lab/zeus-audio-control/releases/tag/v0.4.0-beta.1) ou na [execução que gerou seus pacotes](https://github.com/luissimoes0106-lab/zeus-audio-control/actions/runs/45536265411).
 
 ## Uso
 
@@ -26,4 +26,6 @@ dotnet build src/ZeusAudioControl -c Release -r win-x64
 dotnet run --project src/ZeusAudioControl
 ```
 
-O GitHub Actions testa e compila em Windows, gera instalador/ZIP/hashes, valida a interface em tamanhos diferentes e testa instalação e remoção no runner Windows. Tags `v0.5.0-beta*` preparam um pré-lançamento em rascunho.
+O GitHub Actions testa e compila em Windows, gera instalador/ZIP/hashes, valida a interface em tamanhos diferentes e testa instalação e remoção no runner Windows. Tags `v0.7.0-beta*` preparam um pré-lançamento em rascunho.
+
+**Sobre o ZEUS** abre a verificação de versões públicas no GitHub quando solicitada. O download e a execução do instalador são manuais. Os controles de áudio continuam disponíveis offline.

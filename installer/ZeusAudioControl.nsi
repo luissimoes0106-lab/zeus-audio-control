@@ -7,16 +7,16 @@ Unicode true
 !define APP_DIR "../dist/portable"
 !endif
 !ifndef OUTPUT
-!define OUTPUT "../dist/ZEUS-Audio-Control-Beta-0.5-Setup-x64.exe"
+!define OUTPUT "../dist/ZEUS-Audio-Control-Beta-0.7-Setup-x64.exe"
 !endif
 
-Name "ZEUS Audio Control Beta 0.5"
+Name "ZEUS Audio Control Beta 0.7"
 OutFile "${OUTPUT}"
-InstallDir "$LOCALAPPDATA\Programs\ZEUS Audio Control Beta 0.5"
+InstallDir "$LOCALAPPDATA\Programs\ZEUS Audio Control Beta 0.7"
 RequestExecutionLevel user
 !define MUI_ICON "../src/ZeusAudioControl/Zeus.ico"
 !define MUI_UNICON "../src/ZeusAudioControl/Zeus.ico"
-!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZeusAudioControlBeta05"
+!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZeusAudioControlBeta07"
 !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -44,10 +44,15 @@ Section "ZEUS Audio Control"
   File "../licenses/*.txt"
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
-  CreateShortCut "$SMPROGRAMS\ZEUS Audio Control Beta 0.5.lnk" "$INSTDIR\ZeusAudioControl.exe"
-  CreateShortCut "$DESKTOP\ZEUS Audio Control Beta 0.5.lnk" "$INSTDIR\ZeusAudioControl.exe"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "ZEUS Audio Control Beta 0.5"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "0.5.0-beta"
+  Delete "$SMPROGRAMS\ZEUS Audio Control Beta 0.5.lnk"
+  Delete "$DESKTOP\ZEUS Audio Control Beta 0.5.lnk"
+  Delete "$SMPROGRAMS\ZEUS Audio Control.lnk"
+  Delete "$DESKTOP\ZEUS Audio Control.lnk"
+  CreateShortCut "$SMPROGRAMS\ZEUS Audio Control.lnk" "$INSTDIR\ZeusAudioControl.exe" "" "$INSTDIR\ZeusAudioControl.exe" 0
+  CreateShortCut "$DESKTOP\ZEUS Audio Control.lnk" "$INSTDIR\ZeusAudioControl.exe" "" "$INSTDIR\ZeusAudioControl.exe" 0
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "ZEUS Audio Control Beta 0.7"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "0.7.0-beta"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\ZeusAudioControl.exe"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
@@ -65,12 +70,12 @@ Section "Uninstall"
       Abort
     ${EndIf}
   ${EndIf}
-  ReadRegStr $0 HKCU "${RUN_KEY}" "ZeusAudioControlBeta05"
+  ReadRegStr $0 HKCU "${RUN_KEY}" "ZeusAudioControlBeta07"
   ${If} $0 == '"$INSTDIR\ZeusAudioControl.exe"'
-    DeleteRegValue HKCU "${RUN_KEY}" "ZeusAudioControlBeta05"
+    DeleteRegValue HKCU "${RUN_KEY}" "ZeusAudioControlBeta07"
   ${EndIf}
-  Delete "$SMPROGRAMS\ZEUS Audio Control Beta 0.5.lnk"
-  Delete "$DESKTOP\ZEUS Audio Control Beta 0.5.lnk"
+  Delete "$SMPROGRAMS\ZEUS Audio Control.lnk"
+  Delete "$DESKTOP\ZEUS Audio Control.lnk"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\licenses\NAudio.txt"
   Delete "$INSTDIR\licenses\dotnet-runtime.txt"

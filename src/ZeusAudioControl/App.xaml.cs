@@ -7,6 +7,8 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (!e.Args.Contains("--ui-smoke", StringComparer.Ordinal))
+            new SplashScreen("ZEUS-Logo.png").Show(autoClose: true, topMost: false);
         if (e.Args.Contains("--ui-smoke", StringComparer.Ordinal))
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, () =>
             {
