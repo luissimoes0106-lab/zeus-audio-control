@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Zeus.ico</ApplicationIcon>
-    <Version>0.3.0-beta.1</Version>
+    <Version>0.4.0-beta.1</Version>
     <AssemblyName>ZeusAudioControl</AssemblyName>
     <Product>ZEUS Audio Control</Product>
     <Description>Independent Windows audio endpoint controls and local microphone testing.</Description>

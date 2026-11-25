@@ -27,6 +27,7 @@ public partial class MainWindow : Window
         RefreshDevices();
         RestoreSelection();
         RestoreStudio();
+        RestoreStartup();
         _timer.Tick += (_, _) => PollAudio();
         _timer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
         {
             SystemEvents.SessionEnding -= OnSessionEnding;
             _timer.Stop();
+            SaveLocal();
             _tray?.ContextMenuStrip?.Dispose();
             _tray?.Dispose();
             _trayIcon?.Dispose();
@@ -137,6 +139,13 @@ public partial class MainWindow : Window
             VolumeSlider.Value = audio.MasterVolumeLevelScalar * 100;
             MuteToggle.IsChecked = audio.Mute;
             VolumeLabel.Text = $"{VolumeSlider.Value:0}%";
+            var ch = audio.Channels;
+            BalanceSlider.IsEnabled = ch.Count == 2;
+            if (ch.Count == 2) {
+                var l = ch[0].VolumeLevelScalar; var r = ch[1].VolumeLevelScalar;
+                BalanceSlider.Value = Math.Max(l,r) > 0 ? (r-l)/Math.Max(l,r)*100 : 0;
+                BalanceStatus.Text = Math.Abs(BalanceSlider.Value)<1 ? "Centro" : $"{BalanceSlider.Value:0}%";
+            }
         }
         catch (Exception ex) { Footer.Text = $"Falha ao ler saída: {ex.Message}"; }
         finally { _updating = false; }
@@ -217,6 +226,7 @@ public partial class MainWindow : Window
             MicMeter.Value = Math.Clamp((db + 60) / 60 * 100, 0, 100);
             PeakDb.Text = $"Pico: {db:0.0} dBFS (escala -60 a 0)";
             if (++_ticks % 14 != 0) return;
+            using (var process = System.Diagnostics.Process.GetCurrentProcess()) Performance.Text = $"Memória: {process.WorkingSet64 / 1048576.0:0} MB";
             var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
             string signature;
             try { signature = string.Join("|", devices.Select(d => d.ID).OrderBy(id => id)); }
@@ -224,7 +234,7 @@ public partial class MainWindow : Window
             if (signature != _signature) RefreshDevices();
             else
             {
-                if (!VolumeSlider.IsMouseCaptureWithin) SyncOutput();
+                if (!VolumeSlider.IsMouseCaptureWithin && !BalanceSlider.IsMouseCaptureWithin) SyncOutput();
                 if (!MicSlider.IsMouseCaptureWithin) SyncInput();
             }
         }
@@ -351,6 +361,14 @@ public partial class MainWindow : Window
         _testReader?.Dispose(); _testReader = null;
         try { System.IO.File.Delete(_testPath); } catch { }
     }
+
+    private void SaveLocal() { try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!); System.IO.File.WriteAllText(StudioPath,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); System.IO.File.WriteAllText(_settingsPath,System.Text.Json.JsonSerializer.Serialize(new string?[]{_output?.ID,_input?.ID})); } catch { } }
+    private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControl") is string; } catch { } }
+    private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControl","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControl",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
+    private void Export_Click(object sender,RoutedEventArgs e) { try { var d=new Microsoft.Win32.SaveFileDialog{Filter="Perfil ZEUS (*.json)|*.json",FileName="zeus-voice.json"}; if(d.ShowDialog()==true) System.IO.File.WriteAllText(d.FileName,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); } catch(Exception ex){Footer.Text=ex.Message;} }
+    private void Import_Click(object sender,RoutedEventArgs e) { try { var d=new Microsoft.Win32.OpenFileDialog{Filter="Perfil ZEUS (*.json)|*.json"}; if(d.ShowDialog()==true && new System.IO.FileInfo(d.FileName).Length<65536 && System.Text.Json.JsonSerializer.Deserialize<StudioProfile>(System.IO.File.ReadAllText(d.FileName)) is StudioProfile p){ApplyStudio(p);SaveLocal();} } catch(Exception ex){Footer.Text=ex.Message;} }
+    private void Reset_Click(object sender,RoutedEventArgs e) { ApplyStudio(new StudioProfile(6,true,true,true,-45,true,2));SaveLocal(); }
+    private async void Stereo_Click(object sender,RoutedEventArgs e) { if(_output is null)return; try { int side=(sender as Button)?.Tag as string=="1"?1:0; var samples=new byte[48000*4/2]; for(int i=0;i<24000;i++){short v=(short)(Math.Sin(i*2*Math.PI*440/48000)*1800*Math.Min(1,Math.Min(i,23999-i)/480.0)); int j=i*4+side*2;samples[j]=(byte)v;samples[j+1]=(byte)(v>>8);} using var stream=new System.IO.MemoryStream(samples); using var wave=new NAudio.Wave.RawSourceWaveStream(stream,new NAudio.Wave.WaveFormat(48000,16,2)); using var player=new NAudio.Wave.WasapiOut(_output,AudioClientShareMode.Shared,false,100); player.Init(wave);player.Play();await System.Threading.Tasks.Task.Delay(800);player.Stop(); }catch(Exception ex){Footer.Text=ex.Message;} }
     private sealed class TestGainProvider : NAudio.Wave.ISampleProvider
     {
         private readonly NAudio.Wave.ISampleProvider source;
@@ -373,7 +391,7 @@ public partial class MainWindow : Window
             envelope = new float[channels]; gateGain = new float[channels];
             noiseStrength = (float)Math.Clamp(noise / 100, 0, 1);
             noiseFloor = new float[channels]; noiseGain = new float[channels];
-            Array.Fill(noiseFloor, .001f); Array.Fill(noiseGain, 1f);
+            Array.Fill(noiseFloor, .001f); Array.Fill(noiseGain, 1f); Array.Fill(gateGain, 1f);
             for (int i = 0; i < channels; i++) {
                 hp[i] = NAudio.Dsp.BiQuadFilter.HighPassFilter(rate, 80, .707f);
                 eq[i] = NAudio.Dsp.BiQuadFilter.PeakingEQ(rate, Math.Min(2500, rate / 4f), 1f, (float)presence);
@@ -394,7 +412,7 @@ public partial class MainWindow : Window
                     if (noiseStrength > 0) {
                         float env = envelope[channel];
                         float floor = noiseFloor[channel];
-                        if (env < floor * 2 || env < .008f) floor += .0001f * (env - floor);
+                        if (env < floor * 2 || env < .008f) floor += .0002f * (env - floor);
                         noiseFloor[channel] = Math.Clamp(floor, .0001f, .02f);
                         float ratio = Math.Clamp((env - noiseFloor[channel]) / Math.Max(env, .0001f), 0, 1);
                         float targetNoise = 1 - noiseStrength * (1 - ratio * ratio);
