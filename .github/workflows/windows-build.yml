@@ -1,10 +1,15 @@
 name: Windows build
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: [main, 'feature/**']
+    tags: ['v0.4.0-beta*']
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
@@ -13,14 +18,54 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Restore
-        run: dotnet restore src/ZeusAudioControl/ZeusAudioControl.csproj
-      - name: Build
-        run: dotnet build src/ZeusAudioControl/ZeusAudioControl.csproj -c Release --no-restore
-      - name: Publish Windows x64
-        run: dotnet publish src/ZeusAudioControl/ZeusAudioControl.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist
+      - name: Run synthetic and persistence tests
+        run: dotnet run --project tests/ZeusAudioControl.Tests -c Release
+      - name: Build Windows x64
+        run: dotnet build src/ZeusAudioControl -c Release -r win-x64
+      - name: Publish portable executable
+        run: dotnet publish src/ZeusAudioControl -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o dist/portable
+      - name: Build installer and archives
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/portable/ZeusAudioControl.exe,LICENSE,licenses -DestinationPath dist/ZEUS-Audio-Control-Beta-0.4-Portable-x64.zip
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $nsis)) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & $nsis installer/ZeusAudioControl.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist -File | ForEach-Object {
+            "$( (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() )  $( $_.Name )"
+          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: ZeusAudioControl-win-x64
-          path: dist/
+          path: |
+            dist/*.zip
+            dist/*.exe
+            dist/SHA256SUMS.txt
           if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v0.4.0-beta')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZeusAudioControl-win-x64
+          path: dist
+      - name: Prepare beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$REPOSITORY" --verify-tag --draft --prerelease --title 'ZEUS Audio Control Beta 0.4' --notes 'Windows 10/11 x64. The installer and portable executable are unsigned. Verify SHA256SUMS.txt before opening.'
+          fi

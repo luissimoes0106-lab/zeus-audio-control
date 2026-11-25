@@ -1,3 +1,5 @@
+using System.IO;
+using System.Windows.Media;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,6 +17,16 @@ public partial class MainWindow : Window
     private MMDevice? _output;
     private MMDevice? _input;
     private bool _updating;
+    private string? _preferredOutput, _preferredInput;
+    private string? _savedSettings;
+    private TimeSpan _lastCpu;
+    private DateTime _lastCpuAt;
+    private bool _closing;
+    private MMDevice? _diagnosedOutput;
+    private sealed record DeviceChoice(MMDevice Device, string Label);
+    private DeviceChoice Choice(MMDevice device) => new(device,
+        _aliases.TryGetValue(device.ID, out var alias) ? alias + " · " + device.FriendlyName : device.FriendlyName);
+    private static MMDevice? Selected(ComboBox box) => (box.SelectedItem as DeviceChoice)?.Device;
     private readonly System.Windows.Threading.DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(150) };
     private int _ticks;
     private string _signature = "";
@@ -24,25 +36,32 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         SetupEq();
+        foreach (var slider in _bands.Concat([BassBoost, LowTone, MidTone, HighTone]))
+            slider.ValueChanged += (_, _) => UpdatePlaybackEq();
         SetupTray();
         LoadAliases();
         RefreshDevices();
         RestoreSelection();
         RestoreStudio();
         RestoreStartup();
+        RestorePreferences();
+        ApplyPreferences();
         _timer.Tick += (_, _) => PollAudio();
         _timer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
         Closed += (_, _) =>
         {
             SystemEvents.SessionEnding -= OnSessionEnding;
+            _closing = true;
             _timer.Stop();
-            SaveLocal();
+            PersistIfChanged();
             _tray?.ContextMenuStrip?.Dispose();
             _tray?.Dispose();
             _trayIcon?.Dispose();
             StopTest();
             StopEq();
+            _stereoPlayer?.Dispose();
+            _stereoPlayer = null;
             ReleaseDevices();
             _enumerator.Dispose();
         };
@@ -62,10 +81,11 @@ public partial class MainWindow : Window
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized && TrayToggle.IsChecked == true) Hide(); };
     }
     private void RestoreWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
-    private void OnSessionEnding(object? sender, SessionEndingEventArgs e) => Close();
+    private void OnSessionEnding(object? sender, SessionEndingEventArgs e) => Dispatcher.Invoke(Close);
 
     private void ReleaseDevices()
     {
+        _diagnosedOutput = null;
         _output = null;
         _input = null;
         foreach (var device in _ownedDevices) device.Dispose();
@@ -82,31 +102,25 @@ public partial class MainWindow : Window
         _updating = true;
         try
         {
-            var previousOutput = _output?.ID;
-            var previousInput = _input?.ID;
+            var previousOutput = _preferredOutput;
+            var previousInput = _preferredInput;
             OutputDevices.ItemsSource = null;
             InputDevices.ItemsSource = null;
             ReleaseDevices();
             var render = _enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active).ToList();
-            var capture = _enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active).ToList();
             _ownedDevices.AddRange(render);
+            var capture = _enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active).ToList();
             _ownedDevices.AddRange(capture);
-            OutputDevices.ItemsSource = render;
-            InputDevices.ItemsSource = capture;
+            OutputDevices.ItemsSource = render.Select(Choice).ToArray();
+            InputDevices.ItemsSource = capture.Select(Choice).ToArray();
             _signature = string.Join("|", render.Concat(capture).Select(d => d.ID).OrderBy(id => id));
-            OutputDevices.SelectedItem = render.FirstOrDefault(d => d.ID == previousOutput) ?? render.FirstOrDefault(IsHeadset) ?? render.FirstOrDefault();
-            InputDevices.SelectedItem = capture.FirstOrDefault(d => d.ID == previousInput) ?? capture.FirstOrDefault(IsHeadset) ?? capture.FirstOrDefault();
-            var found = render.Any(IsHeadset) || capture.Any(IsHeadset);
-            DeviceStatus.Text = found
-                ? "H510 Pro detectado nas interfaces de áudio do Windows."
-                : "Modo universal: selecione qualquer dispositivo de áudio ativo.";
-            Footer.Text = found
-                ? "Dispositivo detectado. Os controles abaixo atuam nos endpoints selecionados, sem mudar o driver."
-                : "Modo universal. Confira os dispositivos selecionados antes de ajustar.";
+            OutputDevices.SelectedItem = FindChoice(OutputDevices, previousOutput, fallback: true);
+            InputDevices.SelectedItem = FindChoice(InputDevices, previousInput, fallback: true);
+            UpdateDeviceStatus();
         }
         catch (Exception ex)
         {
-            DeviceStatus.Text = "Não foi possível enumerar os dispositivos de áudio.";
+            DeviceStatus.Text = T("Não foi possível enumerar os dispositivos de áudio.");
             Footer.Text = ex.Message;
         }
         finally { _updating = false; }
@@ -115,12 +129,21 @@ public partial class MainWindow : Window
         ShowAliases();
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) { if (_testCapture is null) RefreshDevices(); }
+    private void UpdateDeviceStatus()
+    {
+        var found = _ownedDevices.Any(IsHeadset);
+        DeviceStatus.Text = T(found
+            ? "H510 Pro detectado nas interfaces de áudio do Windows."
+            : "Modo universal: selecione qualquer dispositivo de áudio ativo.");
+    }
+
+    private void Refresh_Click(object sender, RoutedEventArgs e) { if (_testCapture is null && _stereoPlayer is null) RefreshDevices(); }
 
     private void OutputDevices_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_updating) return;
-        _output = OutputDevices.SelectedItem as MMDevice;
+        _output = Selected(OutputDevices);
+        _preferredOutput = _output?.ID;
         SyncOutput();
         ShowAliases();
     }
@@ -128,7 +151,8 @@ public partial class MainWindow : Window
     private void InputDevices_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_updating) return;
-        _input = InputDevices.SelectedItem as MMDevice;
+        _input = Selected(InputDevices);
+        _preferredInput = _input?.ID;
         SyncInput();
         ShowAliases();
     }
@@ -138,9 +162,16 @@ public partial class MainWindow : Window
         _updating = true;
         try
         {
-            _output = OutputDevices.SelectedItem as MMDevice;
+            _output = Selected(OutputDevices);
             VolumeSlider.IsEnabled = MuteToggle.IsEnabled = _output is not null;
-            if (_output is null) { VolumeLabel.Text = "Selecione um dispositivo de saída"; return; }
+            BalanceSlider.IsEnabled = false;
+            StereoLeft.IsEnabled = StereoRight.IsEnabled = _output is not null;
+            if (_output != _diagnosedOutput || _output is null)
+            {
+                try { SurroundStatus.Text = DescribeOutput(); _diagnosedOutput = _output; }
+                catch (Exception error) { SurroundStatus.Text = error.Message; }
+            }
+            if (_output is null) { VolumeLabel.Text = T("Selecione um dispositivo de saída"); return; }
             var audio = _output.AudioEndpointVolume;
             VolumeSlider.Value = audio.MasterVolumeLevelScalar * 100;
             MuteToggle.IsChecked = audio.Mute;
@@ -150,7 +181,7 @@ public partial class MainWindow : Window
             if (ch.Count == 2) {
                 var l = ch[0].VolumeLevelScalar; var r = ch[1].VolumeLevelScalar;
                 BalanceSlider.Value = Math.Max(l,r) > 0 ? (r-l)/Math.Max(l,r)*100 : 0;
-                BalanceStatus.Text = Math.Abs(BalanceSlider.Value)<1 ? "Centro" : $"{BalanceSlider.Value:0}%";
+                BalanceStatus.Text = Math.Abs(BalanceSlider.Value)<1 ? T("Centro") : $"{BalanceSlider.Value:0}%";
             }
         }
         catch (Exception ex) { Footer.Text = $"Falha ao ler saída: {ex.Message}"; }
@@ -162,9 +193,9 @@ public partial class MainWindow : Window
         _updating = true;
         try
         {
-            _input = InputDevices.SelectedItem as MMDevice;
+            _input = Selected(InputDevices);
             MicSlider.IsEnabled = MicMute.IsEnabled = _input is not null;
-            if (_input is null) { MicLabel.Text = "Selecione um microfone"; return; }
+            if (_input is null) { MicLabel.Text = T("Selecione um microfone"); return; }
             MicMute.IsChecked = _input.AudioEndpointVolume.Mute;
             MicSlider.Value = _input.AudioEndpointVolume.MasterVolumeLevelScalar * 100;
             MicLabel.Text = $"{MicSlider.Value:0}%";
@@ -189,12 +220,12 @@ public partial class MainWindow : Window
         if (_updating || _output is null) return;
         try {
             var channels = _output.AudioEndpointVolume.Channels;
-            if (channels.Count != 2) { BalanceStatus.Text = "Disponível apenas em saídas estéreo."; return; }
+            if (channels.Count != 2) { BalanceStatus.Text = T("Disponível apenas em saídas estéreo."); return; }
             var master = Math.Max(channels[0].VolumeLevelScalar, channels[1].VolumeLevelScalar);
             var b = (float)(BalanceSlider.Value / 100);
             channels[0].VolumeLevelScalar = master * (1 - Math.Max(0, b));
             channels[1].VolumeLevelScalar = master * (1 + Math.Min(0, b));
-            BalanceStatus.Text = b == 0 ? "Centro" : $"{Math.Abs(b)*100:0}% para {(b < 0 ? "esquerda" : "direita")}";
+            BalanceStatus.Text = b == 0 ? T("Centro") : $"{Math.Abs(b)*100:0}% para {(b < 0 ? "esquerda" : "direita")}";
         } catch (Exception ex) { BalanceStatus.Text = ex.Message; }
     }
     private void MicSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -224,15 +255,35 @@ public partial class MainWindow : Window
 
     private void PollAudio()
     {
-        if (_updating || _testCapture is not null) return;
+        if (_updating || _testCapture is not null || _stereoPlayer is not null) return;
         try
         {
-            var peak = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue;
-            var db = 20 * Math.Log10(Math.Max(0.000001, peak));
-            MicMeter.Value = Math.Clamp((db + 60) / 60 * 100, 0, 100);
-            PeakDb.Text = $"Pico: {db:0.0} dBFS (escala -60 a 0)";
+            try
+            {
+                var peak = _input is null ? 0 : _input.AudioMeterInformation.MasterPeakValue;
+                var db = 20 * Math.Log10(Math.Max(0.000001, peak));
+                MicMeter.Value = Math.Clamp((db + 60) / 60 * 100, 0, 100);
+                PeakDb.Text = _english ? $"Peak: {db:0.0} dBFS" : $"Pico: {db:0.0} dBFS";
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                MicMeter.Value = 0;
+                PeakDb.Text = "— dBFS";
+            }
             if (++_ticks % 14 != 0) return;
-            using (var process = System.Diagnostics.Process.GetCurrentProcess()) Performance.Text = $"Memória: {process.WorkingSet64 / 1048576.0:0} MB";
+            using (var process = System.Diagnostics.Process.GetCurrentProcess())
+            {
+                var now = DateTime.UtcNow;
+                var cpu = process.TotalProcessorTime;
+                var elapsed = (now - _lastCpuAt).TotalSeconds;
+                var percent = elapsed > 0 && _lastCpuAt != default
+                    ? 100 * (cpu - _lastCpu).TotalSeconds / elapsed / Environment.ProcessorCount : 0;
+                Performance.Text = $"CPU: {percent:0.0}%  ·  RAM: {process.WorkingSet64 / 1048576.0:0} MB";
+                _lastCpu = cpu;
+                _lastCpuAt = now;
+            }
+            PersistIfChanged();
+            if (_page == "Áudio" && _ticks % 70 == 0) _diagnosedOutput = null;
             var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
             string signature;
             try { signature = string.Join("|", devices.Select(d => d.ID).OrderBy(id => id)); }
@@ -259,7 +310,8 @@ public partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e) => Navigate("Configurações");
     private void Navigate(string page)
     {
-        PageTitle.Text = page;
+        _page = page;
+        PageTitle.Text = T(page);
         OverviewPanel.Visibility = page == "Visão geral" ? Visibility.Visible : Visibility.Collapsed;
         ControlsCard.Visibility = page == "Visão geral" ? Visibility.Collapsed : Visibility.Visible;
         AudioPanel.Visibility = page == "Áudio" ? Visibility.Visible : Visibility.Collapsed;
@@ -267,7 +319,6 @@ public partial class MainWindow : Window
         SettingsPanel.Visibility = page == "Configurações" ? Visibility.Visible : Visibility.Collapsed;
         MainScroll.ScrollToTop();
     }
-    private sealed record StudioProfile(double Gain, bool Enabled, bool HighPass, bool Gate, double Threshold, bool Compressor, double Presence, double Noise = 0);
     private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
     private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value);
     private void ApplyStudio(StudioProfile p)
@@ -285,14 +336,14 @@ public partial class MainWindow : Window
             "record" => new StudioProfile(3, true, true, false, -50, true, 1),
             _ => new StudioProfile(6, true, true, true, -45, true, 2)
         });
-        StudioStatus.Text = "Perfil aplicado ao teste local. Ajuste conforme sua voz e salve se desejar.";
+        StudioStatus.Text = T("Perfil aplicado ao teste local. Ajuste conforme sua voz e salve se desejar.");
     }
     private void SaveStudio_Click(object sender, RoutedEventArgs e)
     {
         try {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!);
             System.IO.File.WriteAllText(StudioPath, System.Text.Json.JsonSerializer.Serialize(CurrentStudio()));
-            StudioStatus.Text = "Perfil personalizado salvo.";
+            StudioStatus.Text = T("Perfil personalizado salvo.");
         } catch (Exception ex) { StudioStatus.Text = ex.Message; }
     }
     private void RestoreStudio()
@@ -305,66 +356,191 @@ public partial class MainWindow : Window
     {
         try {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_settingsPath)!);
-            System.IO.File.WriteAllText(_settingsPath, System.Text.Json.JsonSerializer.Serialize(new string?[] { _output?.ID, _input?.ID }));
-            Footer.Text = "Seleção salva neste computador.";
+            ProfileFile.Write(_settingsPath, new string?[] { _preferredOutput ?? _output?.ID, _preferredInput ?? _input?.ID });
+            Footer.Text = T("Seleção salva neste computador.");
         } catch (Exception ex) { Footer.Text = ex.Message; }
     }
+    private static DeviceChoice? FindChoice(ComboBox box, string? id, bool fallback)
+    {
+        var choices = box.Items.OfType<DeviceChoice>();
+        return choices.FirstOrDefault(c => c.Device.ID == id)
+            ?? (fallback ? choices.FirstOrDefault(c => IsHeadset(c.Device)) ?? choices.FirstOrDefault() : null);
+    }
+
     private void RestoreSelection()
     {
-        try {
-            if (!System.IO.File.Exists(_settingsPath)) return;
-            var ids = System.Text.Json.JsonSerializer.Deserialize<string?[]>(System.IO.File.ReadAllText(_settingsPath));
-            if (ids is null || ids.Length != 2) return;
-            var output = OutputDevices.Items.OfType<MMDevice>().FirstOrDefault(d => d.ID == ids[0]);
-            var input = InputDevices.Items.OfType<MMDevice>().FirstOrDefault(d => d.ID == ids[1]);
-            if (output is not null) OutputDevices.SelectedItem = output;
-            if (input is not null) InputDevices.SelectedItem = input;
-        } catch (Exception ex) { Footer.Text = ex.Message; }
+        try
+        {
+            if (!File.Exists(_settingsPath)) return;
+            var ids = ProfileFile.Read<string?[]>(_settingsPath);
+            if (ids.Length != 2) return;
+            _preferredOutput = ids[0];
+            _preferredInput = ids[1];
+            RefreshDevices();
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
     }
+
+    private string DescribeOutput()
+    {
+        if (_output is null) return T("Selecione uma saída para verificar o formato.");
+        using var client = _output.AudioClient;
+        var format = client.MixFormat;
+        var mask = ChannelLayout.GetMask(format);
+        var layout = format.Channels == 8 && mask is 0x63F or 0xFF
+            ? T("Formato 7.1 anunciado pelo Windows. Confirme a saída física no teste de alto-falantes do Windows.")
+            : _english ? $"{format.Channels} channel(s) in the current mix format." : $"{format.Channels} canal(is) no formato de mixagem atual.";
+        return $"{layout} {format.SampleRate:N0} Hz.";
+    }
+
+    private sealed record Preferences(bool Tray, bool Advanced, bool English);
+    private string PreferencesPath => Path.Combine(Path.GetDirectoryName(_settingsPath)!, "preferences.json");
+    private Preferences CurrentPreferences() => new(TrayToggle.IsChecked == true, AdvancedToggle.IsChecked == true, EnglishToggle.IsChecked == true);
+
+    private void RestorePreferences()
+    {
+        try
+        {
+            if (!File.Exists(PreferencesPath)) return;
+            var preferences = ProfileFile.Read<Preferences>(PreferencesPath);
+            TrayToggle.IsChecked = preferences.Tray;
+            AdvancedToggle.IsChecked = preferences.Advanced;
+            EnglishToggle.IsChecked = preferences.English;
+            ApplyPreferences();
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
+    }
+
+    private void Preferences_Click(object sender, RoutedEventArgs e) => ApplyPreferences();
+
+    private void ApplyPreferences()
+    {
+        var preferences = CurrentPreferences();
+        AdvancedAudio.Visibility = AdvancedMic.Visibility = preferences.Advanced ? Visibility.Visible : Visibility.Collapsed;
+        ApplyLanguage(preferences.English);
+    }
+
+    private void PersistIfChanged()
+    {
+        try
+        {
+            var preferences = CurrentPreferences();
+            var eq = CurrentEq();
+            var studio = CurrentStudio();
+            string?[] ids = [_preferredOutput ?? _output?.ID, _preferredInput ?? _input?.ID];
+            var snapshot = System.Text.Json.JsonSerializer.Serialize(new { preferences, eq, studio, ids });
+            if (snapshot == _savedSettings) return;
+            ProfileFile.Write(PreferencesPath, preferences);
+            ProfileFile.Write(StudioPath, studio);
+            ProfileFile.Write(EqPath, eq);
+            ProfileFile.Write(_settingsPath, ids);
+            _savedSettings = snapshot;
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
+    }
+
     private async void Record_Click(object sender, RoutedEventArgs e)
     {
         if (_input is null || _testCapture is not null) return;
         RecordButton.IsEnabled = PlayButton.IsEnabled = false;
-        _testPlayer?.Dispose(); _testPlayer = null;
-        _testReader?.Dispose(); _testReader = null;
+        StopMicrophonePlayback();
         try {
             _testCapture = new NAudio.CoreAudioApi.WasapiCapture(_input);
             _testWriter = new NAudio.Wave.WaveFileWriter(_testPath, _testCapture.WaveFormat);
             var done = new System.Threading.Tasks.TaskCompletionSource<Exception?>();
-            _testCapture.DataAvailable += (_, a) => _testWriter?.Write(a.Buffer, 0, a.BytesRecorded);
+            var capture = _testCapture;
+            var writer = _testWriter;
+            capture.DataAvailable += (_, a) =>
+            {
+                writer.Write(a.Buffer, 0, a.BytesRecorded);
+                UpdateWaveform(a.Buffer, a.BytesRecorded, capture.WaveFormat);
+            };
             _testCapture.RecordingStopped += (_, a) => done.TrySetResult(a.Exception);
             _testCapture.StartRecording();
-            TestStatus.Text = "Gravando localmente por 5 segundos...";
+            TestStatus.Text = T("Gravando localmente por 5 segundos...");
             await System.Threading.Tasks.Task.WhenAny(done.Task, System.Threading.Tasks.Task.Delay(5000));
+            if (_closing) return;
             _testCapture?.StopRecording();
             if (await System.Threading.Tasks.Task.WhenAny(done.Task, System.Threading.Tasks.Task.Delay(3000)) != done.Task) throw new TimeoutException("Tempo limite de gravação.");
+            if (_closing) return;
             if (await done.Task is Exception error) throw error;
             _testCapture?.Dispose(); _testCapture = null;
             _testWriter?.Dispose(); _testWriter = null;
             PlayButton.IsEnabled = true;
-            TestStatus.Text = "Teste gravado. Ouça com volume baixo. Reprodução pela saída padrão do Windows.";
+            TestStatus.Text = T("Teste gravado. Ouça com volume baixo. Reprodução pela saída padrão do Windows.");
         } catch (Exception ex) { StopTest(); TestStatus.Text = ex.Message; }
-        finally { RecordButton.IsEnabled = true; }
+        finally { if (!_closing) RecordButton.IsEnabled = true; }
     }
+    private void UpdateWaveform(byte[] data, int length, NAudio.Wave.WaveFormat format)
+    {
+        if (format.Encoding != NAudio.Wave.WaveFormatEncoding.IeeeFloat &&
+            format.Encoding != NAudio.Wave.WaveFormatEncoding.Pcm &&
+            format.Encoding != NAudio.Wave.WaveFormatEncoding.Extensible) return;
+        var samples = new float[96];
+        var bytesPerSample = format.BitsPerSample / 8;
+        var frames = length / format.BlockAlign;
+        if (frames == 0 || bytesPerSample is < 2 or > 4) return;
+        var floating = format.Encoding == NAudio.Wave.WaveFormatEncoding.IeeeFloat ||
+            format is NAudio.Wave.WaveFormatExtensible ext &&
+            ext.SubFormat == new Guid("00000003-0000-0010-8000-00aa00389b71");
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var index = i * frames / samples.Length * format.BlockAlign;
+            samples[i] = bytesPerSample switch
+            {
+                2 => BitConverter.ToInt16(data, index) / 32768f,
+                3 => ((data[index] << 8) | (data[index + 1] << 16) | (data[index + 2] << 24)) / 2147483648f,
+                4 when floating => BitConverter.ToSingle(data, index),
+                4 => BitConverter.ToInt32(data, index) / 2147483648f,
+                _ => 0
+            };
+        }
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_closing || _testCapture is null) return;
+            var points = new PointCollection(samples.Length);
+            for (var i = 0; i < samples.Length; i++)
+            {
+                var amplitude = float.IsFinite(samples[i]) ? Math.Clamp(samples[i], -1, 1) : 0;
+                points.Add(new Point(i * WaveCanvas.ActualWidth / (samples.Length - 1), 32 - amplitude * 31));
+            }
+            WaveLine.Points = points;
+        });
+    }
+
     private void Play_Click(object sender, RoutedEventArgs e)
     {
         try {
-            _testPlayer?.Dispose(); _testReader?.Dispose();
+            StopMicrophonePlayback();
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
             if (RawPlayback.IsChecked == true) { _testReader.Volume = .35f; _testPlayer.Init(_testReader); }
             else _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value)));
-            _testPlayer.Play();
-        } catch (Exception ex) { TestStatus.Text = ex.Message; }
+            var player = _testPlayer;
+            player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>
+            {
+                if (_testPlayer != player) return;
+                StopMicrophonePlayback();
+                if (args.Exception is { } error) TestStatus.Text = error.Message;
+            });
+            player.Play();
+        } catch (Exception ex) { StopMicrophonePlayback(); TestStatus.Text = ex.Message; }
     }
+    private void StopMicrophonePlayback()
+    {
+        var player = _testPlayer;
+        _testPlayer = null;
+        try { player?.Dispose(); }
+        finally { _testReader?.Dispose(); _testReader = null; }
+    }
+
     private void StopTest()
     {
         try { _testCapture?.StopRecording(); _testCapture?.Dispose(); } catch { }
         _testCapture = null;
         _testWriter?.Dispose(); _testWriter = null;
-        _testPlayer?.Dispose(); _testPlayer = null;
-        _testReader?.Dispose(); _testReader = null;
+        StopMicrophonePlayback();
         try { System.IO.File.Delete(_testPath); } catch { }
     }
 
@@ -373,98 +549,217 @@ public partial class MainWindow : Window
     private string AliasPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "aliases.json");
     private void LoadAliases() { try { if(System.IO.File.Exists(AliasPath)) _aliases=System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,string>>(System.IO.File.ReadAllText(AliasPath)) ?? new(); } catch { } }
     private void ShowAliases() { OutputAlias.Text=_output is null?"":_aliases.GetValueOrDefault(_output.ID,""); InputAlias.Text=_input is null?"":_aliases.GetValueOrDefault(_input.ID,""); }
-    private void Alias_Click(object sender,RoutedEventArgs e) { try { bool output=(sender as Button)?.Tag as string=="out"; var device=output?_output:_input; if(device is null)return; var alias=(output?OutputAlias.Text:InputAlias.Text).Trim(); if(alias.Length>80) { Footer.Text="Use até 80 caracteres.";return; } if(alias.Length==0)_aliases.Remove(device.ID);else _aliases[device.ID]=alias; System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(AliasPath)!); System.IO.File.WriteAllText(AliasPath,System.Text.Json.JsonSerializer.Serialize(_aliases)); Footer.Text=alias.Length==0?"Apelido removido.":$"Apelido salvo: {alias}"; }catch(Exception ex){Footer.Text=ex.Message;} }
-    private void SaveLocal() { try { SaveEq(); System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!); System.IO.File.WriteAllText(StudioPath,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); System.IO.File.WriteAllText(_settingsPath,System.Text.Json.JsonSerializer.Serialize(new string?[]{_output?.ID,_input?.ID})); } catch { } }
+    private void Alias_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            bool output = (sender as Button)?.Tag as string == "out";
+            var device = output ? _output : _input;
+            if (device is null) return;
+            var alias = (output ? OutputAlias.Text : InputAlias.Text).Trim();
+            if (alias.Length > 80) { Footer.Text = T("Use até 80 caracteres."); return; }
+            var aliases = new Dictionary<string, string>(_aliases);
+            if (alias.Length == 0) aliases.Remove(device.ID);
+            else aliases[device.ID] = alias;
+            ProfileFile.Write(AliasPath, aliases);
+            _aliases = aliases;
+            var selector = output ? OutputDevices : InputDevices;
+            _updating = true;
+            try
+            {
+                selector.ItemsSource = selector.Items.Cast<DeviceChoice>().Select(c => Choice(c.Device)).ToArray();
+                selector.SelectedItem = FindChoice(selector, device.ID, fallback: false);
+            }
+            finally { _updating = false; }
+            Footer.Text = alias.Length == 0 ? T("Apelido removido.") : $"Apelido salvo: {alias}";
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
+    }
     private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControl") is string; } catch { } }
     private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControl","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControl",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
-    private void Export_Click(object sender,RoutedEventArgs e) { try { var d=new Microsoft.Win32.SaveFileDialog{Filter="Perfil ZEUS (*.json)|*.json",FileName="zeus-voice.json"}; if(d.ShowDialog()==true) System.IO.File.WriteAllText(d.FileName,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); } catch(Exception ex){Footer.Text=ex.Message;} }
-    private void Import_Click(object sender,RoutedEventArgs e) { try { var d=new Microsoft.Win32.OpenFileDialog{Filter="Perfil ZEUS (*.json)|*.json"}; if(d.ShowDialog()==true && new System.IO.FileInfo(d.FileName).Length<65536 && System.Text.Json.JsonSerializer.Deserialize<StudioProfile>(System.IO.File.ReadAllText(d.FileName)) is StudioProfile p){ApplyStudio(p);SaveLocal();} } catch(Exception ex){Footer.Text=ex.Message;} }
-    private void Reset_Click(object sender,RoutedEventArgs e) { ApplyStudio(new StudioProfile(6,true,true,true,-45,true,2));SaveLocal(); }
-    private async void Stereo_Click(object sender,RoutedEventArgs e) { if(_output is null)return; try { int side=(sender as Button)?.Tag as string=="1"?1:0; var samples=new byte[48000*4/2]; for(int i=0;i<24000;i++){short v=(short)(Math.Sin(i*2*Math.PI*440/48000)*1800*Math.Min(1,Math.Min(i,23999-i)/480.0)); int j=i*4+side*2;samples[j]=(byte)v;samples[j+1]=(byte)(v>>8);} using var stream=new System.IO.MemoryStream(samples); using var wave=new NAudio.Wave.RawSourceWaveStream(stream,new NAudio.Wave.WaveFormat(48000,16,2)); using var player=new NAudio.Wave.WasapiOut(_output,AudioClientShareMode.Shared,false,100); player.Init(wave);player.Play();await System.Threading.Tasks.Task.Delay(800);player.Stop(); }catch(Exception ex){Footer.Text=ex.Message;} }
-
-    private readonly double[] _freq={31,62,125,250,500,1000,2000,4000,8000,16000};
-    private readonly List<Slider> _bands=new();
-    private NAudio.Wave.AudioFileReader? _eqReader;
-    private NAudio.Wave.WaveOutEvent? _eqPlayer;
-    private string EqPath=>System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!,"eq.json");
-    private void SetupEq(){
-        foreach(var f in _freq){var panel=new StackPanel();var slider=new Slider{Orientation=System.Windows.Controls.Orientation.Vertical,Minimum=-12,Maximum=12,Height=120,Width=24,Value=0};_bands.Add(slider);panel.Children.Add(slider);panel.Children.Add(new TextBlock{Text=f>=1000?$"{f/1000:0}k":$"{f:0}",FontSize=10,HorizontalAlignment=HorizontalAlignment.Center});EqGrid.Children.Add(panel);}
-        try{if(System.IO.File.Exists(EqPath)){var v=System.Text.Json.JsonSerializer.Deserialize<double[]>(System.IO.File.ReadAllText(EqPath));if(v?.Length==11){for(int i=0;i<10;i++)_bands[i].Value=Math.Clamp(v[i],-12,12);BassBoost.Value=Math.Clamp(v[10],0,9);}}}catch{}
-    }
-    private void SaveEq(){System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(EqPath)!);System.IO.File.WriteAllText(EqPath,System.Text.Json.JsonSerializer.Serialize(_bands.Select(b=>b.Value).Append(BassBoost.Value).ToArray()));}
-    private void EqPreset_Click(object sender,RoutedEventArgs e){double[] v=((sender as Button)?.Tag as string) switch{"game"=>new double[]{-3,-2,-1,0,1,2,4,4,2,0},"music"=>new double[]{3,3,2,0,-1,0,1,2,3,2},"movie"=>new double[]{4,3,2,0,0,2,2,1,0,0},_=>new double[10]};for(int i=0;i<10;i++)_bands[i].Value=v[i];BassBoost.Value=0;}
-    private void StopEq(){_eqPlayer?.Dispose();_eqPlayer=null;_eqReader?.Dispose();_eqReader=null;}
-    private void EqStop_Click(object sender,RoutedEventArgs e){StopEq();EqStatus.Text="Reprodução parada.";}
-    private void EqPlay_Click(object sender,RoutedEventArgs e){try{var d=new Microsoft.Win32.OpenFileDialog{Filter="Áudio|*.wav;*.mp3;*.aiff;*.wma"};if(d.ShowDialog()!=true)return;StopEq();_eqReader=new NAudio.Wave.AudioFileReader(d.FileName);_eqPlayer=new NAudio.Wave.WaveOutEvent();_eqPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new LocalEq(_eqReader,_freq,_bands.Select(b=>b.Value).ToArray(),BassBoost.Value)));_eqPlayer.Play();EqStatus.Text="Reproduzindo na saída padrão. Para aplicar novos ajustes, reabra o arquivo.";}catch(Exception ex){StopEq();EqStatus.Text=ex.Message;}}
-    private sealed class LocalEq:NAudio.Wave.ISampleProvider{
-        private readonly NAudio.Wave.ISampleProvider source;private readonly NAudio.Dsp.BiQuadFilter[][] filters;private int channel;private readonly float headroom;
-        public LocalEq(NAudio.Wave.ISampleProvider source,double[] freq,double[] gains,double bass){this.source=source;filters=new NAudio.Dsp.BiQuadFilter[source.WaveFormat.Channels][];int rate=source.WaveFormat.SampleRate;headroom=(float)Math.Pow(10,-(Math.Max(0,gains.Max())+bass+3)/20);for(int c=0;c<filters.Length;c++){var list=new List<NAudio.Dsp.BiQuadFilter>();for(int i=0;i<freq.Length;i++)if(freq[i]<rate*.45 && Math.Abs(gains[i])>.01)list.Add(NAudio.Dsp.BiQuadFilter.PeakingEQ(rate,(float)freq[i],1.4f,(float)gains[i]));if(bass>0)list.Add(NAudio.Dsp.BiQuadFilter.PeakingEQ(rate,80,.7f,(float)bass));filters[c]=list.ToArray();}}
-        public NAudio.Wave.WaveFormat WaveFormat=>source.WaveFormat;
-        public int Read(float[] buffer,int offset,int count){int n=source.Read(buffer,offset,count);for(int i=offset;i<offset+n;i++){float v=buffer[i]*headroom;foreach(var f in filters[channel])v=f.Transform(v);buffer[i]=Math.Clamp(v,-.85f,.85f);channel=(channel+1)%filters.Length;}return n;}
-    }
-    private sealed class TestGainProvider : NAudio.Wave.ISampleProvider
+    private void Export_Click(object sender, RoutedEventArgs e)
     {
-        private readonly NAudio.Wave.ISampleProvider source;
-        private readonly float gain;
-        private readonly bool studio, gate, compressor;
-        private readonly float threshold, attack, release;
-        private readonly NAudio.Dsp.BiQuadFilter[] hp, eq;
-        private readonly bool highPass;
-        private readonly float[] envelope, gateGain;
-        private int channel;
-        private readonly float noiseStrength;
-        private readonly float[] noiseFloor, noiseGain;
-        public TestGainProvider(NAudio.Wave.ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise)
+        try
         {
-            this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
-            threshold = (float)Math.Pow(10, thresholdDb / 20);
-            int rate = source.WaveFormat.SampleRate, channels = source.WaveFormat.Channels;
-            attack = (float)Math.Exp(-1.0 / (rate * .005)); release = (float)Math.Exp(-1.0 / (rate * .15));
-            hp = new NAudio.Dsp.BiQuadFilter[channels]; eq = new NAudio.Dsp.BiQuadFilter[channels];
-            envelope = new float[channels]; gateGain = new float[channels];
-            noiseStrength = (float)Math.Clamp(noise / 100, 0, 1);
-            noiseFloor = new float[channels]; noiseGain = new float[channels];
-            Array.Fill(noiseFloor, .001f); Array.Fill(noiseGain, 1f); Array.Fill(gateGain, 1f);
-            for (int i = 0; i < channels; i++) {
-                hp[i] = NAudio.Dsp.BiQuadFilter.HighPassFilter(rate, 80, .707f);
-                eq[i] = NAudio.Dsp.BiQuadFilter.PeakingEQ(rate, Math.Min(2500, rate / 4f), 1f, (float)presence);
+            var dialog = new SaveFileDialog { Filter = "ZEUS (*.json)|*.json", FileName = "zeus-profile.json" };
+            if (dialog.ShowDialog() == true)
+                ProfileFile.Write(dialog.FileName, new ExportedProfile(1, CurrentStudio(), CurrentEq()));
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
+    }
+
+    private void Import_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new OpenFileDialog { Filter = "ZEUS (*.json)|*.json" };
+            if (dialog.ShowDialog() != true) return;
+            var profile = ExportedProfile.Load(dialog.FileName);
+            ApplyStudio(profile.Voice);
+            if (profile.Equalizer is { } values) ApplyEq(values);
+            PersistIfChanged();
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
+    }
+
+    private void Reset_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyStudio(new StudioProfile(6, true, true, true, -45, true, 2));
+        ApplyEq(new double[14]);
+        PersistIfChanged();
+    }
+    private void RestoreDefaults_Click(object sender, RoutedEventArgs e)
+    {
+        if (_testCapture is not null || _stereoPlayer is not null)
+        {
+            Footer.Text = _english ? "Wait for the active test to finish." : "Aguarde o teste em andamento.";
+            return;
+        }
+
+        var prompt = _english
+            ? "Reset local profiles, aliases, device selection and app preferences?"
+            : "Restaurar perfis, apelidos, seleção de dispositivos e preferências locais?";
+        if (MessageBox.Show(this, prompt, Title, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        try
+        {
+            ProfileFile.Write(AliasPath, new Dictionary<string, string>());
+            _aliases.Clear();
+            using var startup = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            startup?.DeleteValue("ZeusAudioControl", throwOnMissingValue: false);
+            AutoStart.IsChecked = false;
+            _preferredOutput = _preferredInput = null;
+            TrayToggle.IsChecked = AdvancedToggle.IsChecked = true;
+            EnglishToggle.IsChecked = false;
+            ApplyPreferences();
+            RefreshDevices();
+            Reset_Click(sender, e);
+        }
+        catch (Exception error) { Footer.Text = error.Message; }
+    }
+
+    private NAudio.Wave.WasapiOut? _stereoPlayer;
+
+    private async void Stereo_Click(object sender, RoutedEventArgs e)
+    {
+        if (_output is null || _stereoPlayer is not null) return;
+        var side = (sender as Button)?.Tag as string == "1" ? 1 : 0;
+        using var stream = new MemoryStream(StereoSignal.Create(side));
+        using var wave = new NAudio.Wave.RawSourceWaveStream(stream, new NAudio.Wave.WaveFormat(48000, 16, 2));
+        try
+        {
+            var player = _stereoPlayer = new NAudio.Wave.WasapiOut(_output, AudioClientShareMode.Shared, false, 100);
+            player.Init(wave);
+            player.Play();
+            await System.Threading.Tasks.Task.Delay(800);
+            if (_stereoPlayer == player) player.Stop();
+        }
+        catch (Exception ex) { Footer.Text = ex.Message; }
+        finally
+        {
+            _stereoPlayer?.Dispose();
+            _stereoPlayer = null;
+        }
+    }
+
+    private static readonly double[] BandFrequencies = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+    private readonly List<Slider> _bands = new();
+    private NAudio.Wave.AudioFileReader? _eqReader;
+    private LocalEq? _playbackEq;
+    private NAudio.Wave.WaveOutEvent? _eqPlayer;
+    private string EqPath => Path.Combine(Path.GetDirectoryName(_settingsPath)!, "eq.json");
+    private void SetupEq()
+    {
+        foreach (var frequency in BandFrequencies)
+        {
+            var panel = new StackPanel();
+            var label = frequency >= 1000 ? $"{frequency / 1000:0}k" : $"{frequency:0}";
+            var slider = new Slider
+            {
+                Orientation = Orientation.Vertical, Minimum = -12, Maximum = 12,
+                Height = 120, Width = 24, TickFrequency = 1, IsSnapToTickEnabled = true,
+                ToolTip = $"{frequency:0} Hz"
+            };
+            System.Windows.Automation.AutomationProperties.SetName(slider, $"{frequency:0} Hz");
+            _bands.Add(slider);
+            panel.Children.Add(slider);
+            panel.Children.Add(new TextBlock { Text = label, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center });
+            EqGrid.Children.Add(panel);
+        }
+        try
+        {
+            if (File.Exists(EqPath))
+            {
+                var values = ProfileFile.Read<double[]>(EqPath);
+                if (ExportedProfile.ValidEq(values)) ApplyEq(values);
             }
         }
-        public NAudio.Wave.WaveFormat WaveFormat => source.WaveFormat;
-        public int Read(float[] buffer, int offset, int count)
+        catch (Exception error) { EqStatus.Text = error.Message; }
+    }
+
+    private double[] CurrentEq() => _bands.Select(b => b.Value)
+        .Concat([BassBoost.Value, LowTone.Value, MidTone.Value, HighTone.Value]).ToArray();
+
+    private void ApplyEq(double[] values)
+    {
+        for (var i = 0; i < 10; i++) _bands[i].Value = Math.Clamp(values[i], -12, 12);
+        BassBoost.Value = Math.Clamp(values[10], 0, 9);
+        LowTone.Value = values.Length == 14 ? Math.Clamp(values[11], -9, 9) : 0;
+        MidTone.Value = values.Length == 14 ? Math.Clamp(values[12], -9, 9) : 0;
+        HighTone.Value = values.Length == 14 ? Math.Clamp(values[13], -9, 9) : 0;
+    }
+    private void EqPreset_Click(object sender, RoutedEventArgs e)
+    {
+        var preset = (sender as Button)?.Tag as string;
+        if (preset == "custom")
         {
-            int read = source.Read(buffer, offset, count);
-            for (int i = offset; i < offset + read; i++) {
-                float v = buffer[i];
-                if (studio) {
-                    if (highPass) v = hp[channel].Transform(v);
-                    v = eq[channel].Transform(v);
-                    float level = Math.Abs(v);
-                    float coeff = level > envelope[channel] ? attack : release;
-                    envelope[channel] = coeff * envelope[channel] + (1-coeff)*level;
-                    if (noiseStrength > 0) {
-                        float env = envelope[channel];
-                        float floor = noiseFloor[channel];
-                        if (env < floor * 2 || env < .008f) floor += .0002f * (env - floor);
-                        noiseFloor[channel] = Math.Clamp(floor, .0001f, .02f);
-                        float ratio = Math.Clamp((env - noiseFloor[channel]) / Math.Max(env, .0001f), 0, 1);
-                        float targetNoise = 1 - noiseStrength * (1 - ratio * ratio);
-                        noiseGain[channel] = .995f * noiseGain[channel] + .005f * targetNoise;
-                        v *= noiseGain[channel];
-                    }
-                    if (gate) {
-                        float target = envelope[channel] >= threshold ? 1f : .03f;
-                        float smooth = target > gateGain[channel] ? attack : release;
-                        gateGain[channel] = smooth * gateGain[channel] + (1-smooth)*target;
-                        v *= gateGain[channel];
-                    }
-                    if (compressor && envelope[channel] > .125f)
-                        v *= (float)Math.Pow(.125f / envelope[channel], .6667);
-                }
-                buffer[i] = .35f * (float)Math.Tanh(v * gain);
-                channel = (channel + 1) % WaveFormat.Channels;
-            }
-            return read;
+            AdvancedToggle.IsChecked = true;
+            ApplyPreferences();
+            return;
         }
+        double[] gains = preset switch
+        {
+            "game" => [-3, -2, -1, 0, 1, 2, 4, 4, 2, 0],
+            "music" => [3, 3, 2, 0, -1, 0, 1, 2, 3, 2],
+            "movie" => [4, 3, 2, 0, 0, 2, 2, 1, 0, 0],
+            _ => new double[10]
+        };
+        ApplyEq(gains.Concat(new double[4]).ToArray());
+    }
+
+    private void StopEq()
+    {
+        var player = _eqPlayer;
+        _eqPlayer = null;
+        _playbackEq = null;
+        try { player?.Dispose(); }
+        finally { _eqReader?.Dispose(); _eqReader = null; }
+    }
+    private void EqStop_Click(object sender,RoutedEventArgs e){StopEq();EqStatus.Text="Reprodução parada.";}
+    private double[] PlaybackGains() =>
+        _bands.Select(band => band.Value).Concat([LowTone.Value, MidTone.Value, HighTone.Value]).ToArray();
+
+    private void UpdatePlaybackEq() => _playbackEq?.SetGains(PlaybackGains(), BassBoost.Value);
+
+    private void EqPlay_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = new OpenFileDialog { Filter = "Audio|*.wav;*.mp3;*.aiff;*.wma" };
+            if (dialog.ShowDialog() != true) return;
+            StopEq();
+            _eqReader = new NAudio.Wave.AudioFileReader(dialog.FileName);
+            var player = _eqPlayer = new NAudio.Wave.WaveOutEvent();
+            var eq = _playbackEq = new LocalEq(_eqReader, BandFrequencies.Concat([120d, 1000d, 6500d]).ToArray(), PlaybackGains(), BassBoost.Value);
+            player.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(eq));
+            player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>
+            {
+                if (_eqPlayer != player) return;
+                StopEq();
+                EqStatus.Text = args.Exception?.Message ?? T("Reprodução parada.");
+            });
+            player.Play();
+            EqStatus.Text = T("Reproduzindo na saída padrão. Ajustes aplicados em tempo real.");
+        }
+        catch (Exception ex) { StopEq(); EqStatus.Text = ex.Message; }
     }
 }
