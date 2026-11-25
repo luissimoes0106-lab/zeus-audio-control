@@ -6,6 +6,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>Zeus.ico</ApplicationIcon>
+    <Version>0.2.0-beta.1</Version>
     <AssemblyName>ZeusAudioControl</AssemblyName>
     <Product>ZEUS Audio Control</Product>
     <Description>Independent Windows audio endpoint controls and local microphone testing.</Description>
@@ -15,6 +17,7 @@
   <ItemGroup>
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+    <Resource Include="Zeus.ico" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 </Project>

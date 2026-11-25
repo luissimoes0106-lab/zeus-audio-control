@@ -1,4 +1,4 @@
-<Window x:Class="ZeusAudioControl.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ZEUS Audio Control" Height="760" Width="900" MinHeight="480" MinWidth="620" Background="#101218" Foreground="#F5F5F5" WindowStartupLocation="CenterScreen">
+<Window x:Class="ZeusAudioControl.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ZEUS Audio Control" Icon="Zeus.ico" Height="760" Width="900" MinHeight="480" MinWidth="620" Background="#101218" Foreground="#F5F5F5" WindowStartupLocation="CenterScreen">
   <Window.Resources>
     <Style TargetType="Button"><Setter Property="Background" Value="#D73939"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="15,9"/><Setter Property="Margin" Value="0,0,8,0"/></Style>
     <Style TargetType="TextBlock"><Setter Property="Margin" Value="0,0,0,8"/></Style>
