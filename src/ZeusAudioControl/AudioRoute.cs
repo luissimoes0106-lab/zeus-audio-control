@@ -87,28 +87,22 @@ internal sealed class AudioRoute
         client.Start();
         try
         {
+            WaitHandle[] events = [stop.Token.WaitHandle, failed, wake];
+            var prefill = System.Diagnostics.Stopwatch.StartNew();
+            while (buffer.BufferedMilliseconds < 25 && prefill.ElapsedMilliseconds < 750)
+            {
+                if (WaitHandle.WaitAny(events, 25) == 0) return;
+                DrainCapture();
+            }
+            if (stop.IsCancellationRequested) return;
             player.Play();
             onStarted();
-            WaitHandle[] events = [stop.Token.WaitHandle, failed, wake];
             while (!stop.IsCancellationRequested)
             {
                 var signal = WaitHandle.WaitAny(events, 500);
                 if (signal == 0) break;
                 if (signal == 1) throw playbackError ?? new InvalidOperationException("The output stream stopped.");
-                while (!stop.IsCancellationRequested && capture.GetNextPacketSize() > 0)
-                {
-                    var data = capture.GetBuffer(out var frames, out var flags);
-                    try
-                    {
-                        var count = checked(frames * mix.BlockAlign);
-                        if ((flags & AudioClientBufferFlags.DataDiscontinuity) != 0)
-                            Interlocked.Increment(ref Discontinuities);
-                        if ((flags & AudioClientBufferFlags.Silent) != 0) Array.Clear(bytes, 0, count);
-                        else Marshal.Copy(data, bytes, 0, count);
-                        buffer.Write(bytes, count);
-                    }
-                    finally { capture.ReleaseBuffer(frames); }
-                }
+                DrainCapture();
             }
         }
         finally
@@ -118,6 +112,24 @@ internal sealed class AudioRoute
             {
                 try { client.Stop(); }
                 catch (COMException) when (stop.IsCancellationRequested) { }
+            }
+        }
+
+        void DrainCapture()
+        {
+            while (!stop.IsCancellationRequested && capture.GetNextPacketSize() > 0)
+            {
+                var data = capture.GetBuffer(out var frames, out var flags);
+                try
+                {
+                    var count = checked(frames * mix.BlockAlign);
+                    if ((flags & AudioClientBufferFlags.DataDiscontinuity) != 0)
+                        Interlocked.Increment(ref Discontinuities);
+                    if ((flags & AudioClientBufferFlags.Silent) != 0) Array.Clear(bytes, 0, count);
+                    else Marshal.Copy(data, bytes, 0, count);
+                    buffer.Write(bytes, count);
+                }
+                finally { capture.ReleaseBuffer(frames); }
             }
         }
     }

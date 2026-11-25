@@ -652,8 +652,13 @@ public partial class MainWindow : Window
             {
                 selector.ItemsSource = selector.Items.Cast<DeviceChoice>().Select(c => Choice(c.Device)).ToArray();
                 selector.SelectedItem = FindChoice(selector, device.ID, fallback: false);
+                var routeSelector = output ? RouteOutput : RouteInput;
+                var routeId = Selected(routeSelector)?.ID;
+                routeSelector.ItemsSource = routeSelector.Items.Cast<DeviceChoice>().Select(c => Choice(c.Device)).ToArray();
+                routeSelector.SelectedItem = FindChoice(routeSelector, routeId, fallback: false);
             }
             finally { _updating = false; }
+            UpdateDashboard();
             Footer.Text = alias.Length == 0 ? T("Apelido removido.") : $"Apelido salvo: {alias}";
         }
         catch (Exception ex) { Footer.Text = ex.Message; }

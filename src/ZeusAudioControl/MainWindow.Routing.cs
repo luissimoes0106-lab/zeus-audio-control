@@ -13,6 +13,9 @@ public partial class MainWindow
     private AudioRoute? _route;
     private RouteKind _routeKind;
     private bool _routeRunning;
+    private StudioProfile? _runningVoice;
+    private bool _runningCompressor, _runningNormalizer;
+    private static readonly PropertyKey EndpointContainer = new(new Guid("8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c"), 2);
     private string? _routeInputId, _routeOutputId;
     private readonly float[] _drySamples = new float[2048];
     private readonly float[] _wetSamples = new float[2048];
@@ -30,6 +33,7 @@ public partial class MainWindow
         ("HeadphoneRoute", "Escuta local em fones", "Local headphone monitoring"),
         ("RouteSource", "Entrada da rota", "Route input"),
         ("RouteDestination", "Saída da rota", "Route output"),
+        ("OutputCompressor", "Compressor de saída", "Output compressor"),
         ("Normalize", "Normalizar nível da saída", "Normalize output level"),
         ("StartRoute", "Iniciar rota", "Start route"),
         ("MeterTitle", "Forma de onda · original em cinza, saída em vermelho", "Waveform · original in gray, output in red"),
@@ -94,8 +98,44 @@ public partial class MainWindow
             return;
         }
 
+        var kind = (RouteKind)RouteMode.SelectedIndex;
+        try
+        {
+            if (kind == RouteKind.Headphones)
+            {
+                var formFactor = Convert.ToInt32(ReadEndpointProperty(output, PropertyKeys.PKEY_AudioEndpoint_FormFactor));
+                if (formFactor is not (3 or 5))
+                {
+                    RouteStatus.Text = L("A escuta exige uma saída que o Windows identifique como fones ou headset.",
+                        "Monitoring requires an output that Windows identifies as headphones or a headset.");
+                    return;
+                }
+            }
+            else
+            {
+                var inputContainer = ReadEndpointProperty(input, EndpointContainer);
+                var outputContainer = ReadEndpointProperty(output, EndpointContainer);
+                if (Guid.TryParse(inputContainer?.ToString(), out var id) && id != Guid.Empty &&
+                    Guid.TryParse(outputContainer?.ToString(), out var other) && id == other)
+                {
+                    RouteStatus.Text = L("Os endpoints pertencem ao mesmo dispositivo. Use um dispositivo físico e um cabo virtual distintos.",
+                        "Both endpoints belong to the same device. Use separate physical and virtual devices.");
+                    return;
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            RouteStatus.Text = error.Message;
+            return;
+        }
+
         var route = _route = new AudioRoute();
-        _routeKind = (RouteKind)RouteMode.SelectedIndex;
+        _routeKind = kind;
+        _runningCompressor = RouteCompressor.IsChecked == true;
+        _runningNormalizer = RouteNormalizer.IsChecked == true;
+        var studio = CurrentStudio();
+        _runningVoice = kind == RouteKind.Playback ? null : studio;
         _routeInputId = input.ID;
         _routeOutputId = output.ID;
         SetRouteControls(true);
@@ -104,7 +144,7 @@ public partial class MainWindow
         try
         {
             await route.Run(_routeInputId, _routeOutputId, _routeKind, EqFrequencies, PlaybackGains(),
-                BassBoost.Value, CurrentStudio(), RouteCompressor.IsChecked == true, RouteNormalizer.IsChecked == true,
+                BassBoost.Value, studio, _runningCompressor, _runningNormalizer,
                 () => Dispatcher.BeginInvoke(() =>
                 {
                     if (_closing || _route != route) return;
@@ -136,6 +176,15 @@ public partial class MainWindow
         }
     }
 
+    private static object? ReadEndpointProperty(MMDevice device, PropertyKey key)
+    {
+        try { return device.Properties.Contains(key) ? device.Properties[key].Value : null; }
+        catch (Exception error) when (error is System.Runtime.InteropServices.COMException or NotSupportedException or NotImplementedException)
+        {
+            return null;
+        }
+    }
+
     private void SetRouteControls(bool active)
     {
         RouteMode.IsEnabled = RouteInput.IsEnabled = RouteOutput.IsEnabled = RouteConfirm.IsEnabled =
@@ -144,7 +193,11 @@ public partial class MainWindow
     }
 
     private void StopRoute_Click(object sender, RoutedEventArgs e) => _route?.Stop();
-    private void MonitorOriginal_Click(object sender, RoutedEventArgs e) => _route?.SetBypass(MonitorOriginal.IsChecked == true);
+    private void MonitorOriginal_Click(object sender, RoutedEventArgs e)
+    {
+        _route?.SetBypass(MonitorOriginal.IsChecked == true);
+        UpdateDashboard();
+    }
 
     private void UpdateDashboard()
     {
@@ -161,19 +214,34 @@ public partial class MainWindow
             "studio" => "Studio", "record" => L("Gravação", "Recording"), _ => L("Personalizado", "Custom")
         };
         OverviewProfile.Text = $"EQ · {eq}     /     {L("Voz", "Voice")} · {voice}";
-        var effects = StudioEnabled.IsChecked == true
-            ? string.Join(" · ", new[]
+        string effects;
+        if (_routeRunning && _routeKind == RouteKind.Playback)
+        {
+            effects = string.Join(" · ", new[]
             {
-                HighPass.IsChecked == true ? L("Passa-altas", "High-pass") : "",
-                GateEnabled.IsChecked == true ? "Gate" : "",
-                CompressorEnabled.IsChecked == true ? L("Compressor", "Compressor") : "",
-                NoiseReduction.Value > 0 ? L("Redução de ruído", "Noise reduction") : "",
+                "EQ", _runningCompressor ? "Compressor" : "",
+                _runningNormalizer ? L("Normalizador", "Normalizer") : "",
                 L("Limitador", "Limiter")
-            }.Where(label => label.Length > 0))
-            : L("Studio desligado", "Studio off");
+            }.Where(label => label.Length > 0));
+        }
+        else
+        {
+            var studio = _routeRunning && _runningVoice is not null ? _runningVoice : CurrentStudio();
+            effects = studio.Enabled
+                ? string.Join(" · ", new[]
+                {
+                    studio.HighPass ? L("Passa-altas", "High-pass") : "",
+                    studio.Gate ? "Gate" : "", studio.Compressor ? "Compressor" : "",
+                    studio.Noise > 0 ? L("Redução de ruído", "Noise reduction") : "",
+                    L("Limitador", "Limiter")
+                }.Where(label => label.Length > 0))
+                : L("Ganho e limitador · Studio desligado", "Gain and limiter · Studio off");
+        }
         var scope = !_routeRunning || _routeKind == RouteKind.Headphones
             ? L("Processamento local", "Local processing")
             : L("Processamento entre aplicativos por rota", "Inter-app processing via route");
+        if (_routeRunning && _routeKind == RouteKind.Headphones && MonitorOriginal.IsChecked == true)
+            effects = L("Original com limite de monitoramento", "Original with monitor level cap");
         OverviewFilters.Text = $"{scope} · {effects}";
     }
 
