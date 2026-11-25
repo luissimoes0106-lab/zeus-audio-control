@@ -1,16 +1,20 @@
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="ZeusAudioControl.MainWindow" Title="ZEUS Audio Control" Icon="Zeus.ico" Height="800" Width="1060" FontFamily="Segoe UI" FontSize="14" MinHeight="480" MinWidth="650" Background="#101012" Foreground="#F5F5F5" WindowStartupLocation="CenterScreen">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:zeus="clr-namespace:ZeusAudioControl" x:Class="ZeusAudioControl.MainWindow" Title="ZEUS Audio Control" Icon="Zeus.ico" Height="800" Width="1160" FontFamily="Segoe UI" FontSize="14" MinHeight="480" MinWidth="610" Background="#101015" Foreground="#F5F5F5" WindowStartupLocation="CenterScreen">
   <Window.Resources>
+    <ResourceDictionary>
+    <ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Theme.xaml"/></ResourceDictionary.MergedDictionaries>
     <Style TargetType="Button">
       <Setter Property="Background" Value="#B92D40"/>
       <Setter Property="Foreground" Value="White"/>
-      <Setter Property="Padding" Value="16,11"/>
+      <Setter Property="Padding" Value="12,8"/>
       <Setter Property="Margin" Value="0,0,8,8"/>
-      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Cursor" Value="Hand"/><Setter Property="HorizontalContentAlignment" Value="Center"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}" BorderBrush="#444957" BorderThickness="1">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center">
+                <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></ContentPresenter.Resources>
+              </ContentPresenter>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -38,17 +42,13 @@
       <Setter Property="Background" Value="#261e24"/>
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
     </Style>
-    <Style TargetType="Slider">
-      <Setter Property="Margin" Value="0,8,0,8"/>
-      <Setter Property="Foreground" Value="#F04455"/>
-      <Setter Property="Height" Value="26"/>
-    </Style>
     <Style TargetType="TextBlock">
-      <Setter Property="Margin" Value="0,0,0,8"/>
+      <Setter Property="Margin" Value="0,0,0,5"/><Setter Property="TextWrapping" Value="Wrap"/>
     </Style>
+    </ResourceDictionary>
   </Window.Resources>
   <DockPanel>
-    <Border DockPanel.Dock="Left" Width="174" Background="#181417" Padding="20">
+    <Border DockPanel.Dock="Left" Width="142" Background="#17171D" Padding="13">
       <StackPanel>
         <Viewbox Width="54" Height="54" HorizontalAlignment="Left" Margin="0,0,0,12">
           <Canvas Width="64" Height="64">
@@ -58,15 +58,16 @@
           </Canvas>
         </Viewbox>
         <TextBlock Text="ZEUS AUDIO" FontWeight="Bold" Foreground="#F04444" FontSize="16" Margin="0,0,0,8"/>
-        <TextBlock Text="CONTROL  /  BETA 0.4" Foreground="#9BA3B6" FontSize="11" Margin="0,0,0,30"/>
+        <TextBlock Text="BETA 0.5" Foreground="#9BA3B6" FontSize="11" Margin="0,0,0,30"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label0}" Click="Overview_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label1}" Click="Audio_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label2}" Click="Microphone_Click" Margin="0,0,0,10"/>
+        <Button Style="{StaticResource Nav}" Content="{DynamicResource RoutesTitle}" Click="Routes_Click" Margin="0,0,0,10"/>
         <Button Style="{StaticResource Nav}" Content="{DynamicResource Label3}" Click="Settings_Click" Margin="0,0,0,10"/>
       </StackPanel>
     </Border>
     <ScrollViewer Name="MainScroll" VerticalScrollBarVisibility="Auto">
-      <Grid Margin="24">
+      <Grid Margin="18" MaxWidth="1140">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/>
@@ -74,23 +75,54 @@
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel>
-          <TextBlock Name="PageTitle" Text="Visão geral" FontSize="27" FontWeight="Bold"/>
+          <TextBlock Name="PageTitle" Text="Visão geral" FontSize="30" FontWeight="Bold"/>
           <TextBlock Text="{DynamicResource Label4}" Foreground="#AFAFB5"/>
         </StackPanel>
-        <StackPanel Name="OverviewPanel" Grid.Row="1" Margin="0,22,0,12">
-          <Border Background="#261e24" CornerRadius="14" Padding="20" Margin="0,0,0,18">
+
+        <StackPanel Name="OverviewPanel" Grid.Row="1" Margin="0,12,0,0">
+          <UniformGrid Columns="2">
+            <Border Style="{StaticResource Card}" Margin="0,0,6,10">
+              <StackPanel>
+                <TextBlock Text="{DynamicResource Label8}" FontWeight="SemiBold"/>
+                <Grid Width="76" Height="76" HorizontalAlignment="Left" Margin="0,4,0,8">
+                  <zeus:LevelRing Value="{Binding ElementName=VolumeSlider, Path=Value}"/>
+                  <TextBlock Text="{Binding ElementName=VolumeLabel, Path=Text}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                             Foreground="{StaticResource Primary}" FontSize="12" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" MaxWidth="52"/>
+                </Grid>
+                <TextBlock Name="OverviewOutput" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding ElementName=SurroundStatus, Path=Text}" Foreground="{StaticResource Secondary}"/>
+                <Button Content="{DynamicResource Label1}" Click="Audio_Click" HorizontalAlignment="Left" Margin="0,5,0,0"/>
+              </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}" Margin="6,0,0,10">
+              <StackPanel>
+                <TextBlock Text="{DynamicResource Label26}" FontWeight="SemiBold"/>
+                <Grid Width="76" Height="76" HorizontalAlignment="Left" Margin="0,4,0,8">
+                  <zeus:LevelRing Value="{Binding ElementName=MicSlider, Path=Value}"/>
+                  <TextBlock Text="{Binding ElementName=MicLabel, Path=Text}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                             FontSize="12" MaxWidth="52" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                </Grid>
+                <TextBlock Name="OverviewInput" FontWeight="SemiBold"/>
+                <ProgressBar Value="{Binding ElementName=MicMeter, Path=Value}" Height="5" Margin="0,4" Foreground="{StaticResource Accent}" Background="{StaticResource Surface}"/>
+                <TextBlock Text="{Binding ElementName=PeakDb, Path=Text}" Foreground="{StaticResource Secondary}"/>
+                <Button Content="{DynamicResource Label2}" Click="Microphone_Click" HorizontalAlignment="Left" Margin="0,5,0,0"/>
+              </StackPanel>
+            </Border>
+          </UniformGrid>
+          <Border Style="{StaticResource Card}">
             <StackPanel>
-              <TextBlock Text="{DynamicResource Label5}" FontSize="23" FontWeight="Bold"/>
-              <TextBlock Text="{DynamicResource Label6}" Foreground="#AFAFB5" TextWrapping="Wrap"/>
+              <TextBlock Name="OverviewProfile" FontWeight="SemiBold"/>
+              <TextBlock Name="OverviewFilters" Foreground="{StaticResource Secondary}"/>
+              <TextBlock Name="DeviceStatus" Foreground="{StaticResource Secondary}"/>
+              <TextBlock Text="{Binding ElementName=Performance, Path=Text}" Foreground="{StaticResource Secondary}"/>
+              <WrapPanel Margin="0,6,0,0">
+                <Button Content="{DynamicResource Label7}" Click="Refresh_Click"/>
+                <Button Content="{DynamicResource RoutesTitle}" Click="Routes_Click"/>
+              </WrapPanel>
             </StackPanel>
           </Border>
-          <TextBlock Name="DeviceStatus" Text="Procurando dispositivos..." TextWrapping="Wrap" Foreground="#E8B4B4"/>
-          <Button Content="{DynamicResource Label7}" HorizontalAlignment="Left" Click="Refresh_Click"/>
-          <TextBlock Text="{Binding ElementName=VolumeLabel, Path=Text}" Margin="0,18,0,8"/>
-          <TextBlock Text="{Binding ElementName=MicLabel, Path=Text}"/>
-          <TextBlock Text="{Binding ElementName=PeakDb, Path=Text}"/>
         </StackPanel>
-        <Border Name="ControlsCard" Visibility="Collapsed" Grid.Row="2" Background="#1d191d" CornerRadius="12" Padding="22">
+        <Border Name="ControlsCard" Visibility="Collapsed" Grid.Row="2" Style="{StaticResource Card}">
           <StackPanel>
             <StackPanel Name="AudioPanel" Visibility="Collapsed">
               <TextBlock Name="AudioHeading" Text="{DynamicResource Label8}" FontSize="20" FontWeight="SemiBold"/>
@@ -98,11 +130,16 @@
               <TextBlock Text="{DynamicResource Label9}" Margin="0,12,0,2"/>
               <Slider Name="BalanceSlider" Minimum="-100" Maximum="100" Value="0" ValueChanged="Balance_Changed"/>
               <TextBlock Name="BalanceStatus" Text="{DynamicResource Label58}"/>
-              <Border Background="#282026" CornerRadius="12" Padding="16" Margin="0,12">
+              <Border Style="{StaticResource Card}" Margin="0,8,0,12">
                 <StackPanel>
                   <TextBlock Text="{DynamicResource Label10}" FontSize="19" FontWeight="Bold"/>
                   <TextBlock Text="{DynamicResource Label11}" TextWrapping="Wrap"/>
                   <StackPanel Name="AdvancedAudio">
+                    <Canvas Name="EqCurve" Background="#101015" Height="85" ClipToBounds="True" SizeChanged="EqCurve_SizeChanged"
+                            MouseLeftButtonDown="EqCurve_MouseDown" MouseMove="EqCurve_MouseMove" MouseLeftButtonUp="EqCurve_MouseUp">
+                      <Line Name="EqCenter" Stroke="#393946" StrokeThickness="1"/>
+                      <Polyline Name="EqLine" Stroke="{StaticResource Accent}" StrokeThickness="2"/>
+                    </Canvas>
                     <UniformGrid Name="EqGrid" Columns="10" Margin="0,12"/>
                     <TextBlock Text="Bass Boost"/>
                     <Slider Name="BassBoost" Minimum="0" Maximum="9" Value="0"/>
@@ -124,11 +161,12 @@
                     <Button Content="{DynamicResource Label18}" Click="EqPlay_Click"/>
                     <Button Content="{DynamicResource Label19}" Click="EqStop_Click"/>
                   </WrapPanel>
+                  <CheckBox Name="VirtualSurround" Content="{DynamicResource SurroundLocal}"/>
                   <TextBlock Name="EqStatus" TextWrapping="Wrap"/>
                   <TextBlock Name="SurroundStatus" Text="Surround 7.1: depende do dispositivo e do driver; não emulado pelo ZEUS." TextWrapping="Wrap"/>
                 </StackPanel>
               </Border>
-              <WrapPanel>
+              <WrapPanel Name="ChannelTests">
                 <Button Name="StereoLeft" Content="{DynamicResource Label20}" Tag="0" Click="Stereo_Click"/>
                 <Button Name="StereoRight" Content="{DynamicResource Label21}" Tag="1" Click="Stereo_Click"/>
               </WrapPanel>
@@ -164,11 +202,15 @@
               </Border>
               <TextBlock Text="{DynamicResource Label31}" TextWrapping="Wrap"/>
               <Slider Name="TestGain" Minimum="0" Maximum="24" TickFrequency="3" IsSnapToTickEnabled="True" Value="6"/>
-              <TextBlock Text="{Binding ElementName=TestGain, Path=Value, StringFormat={}{0:0} dB}"/>
+              <Grid Width="66" Height="66" HorizontalAlignment="Left" Margin="0,0,0,5">
+                <zeus:LevelRing Value="{Binding ElementName=TestGain, Path=Value, Converter={x:Static zeus:GainToPercent.Instance}}"/>
+                <TextBlock Text="{Binding ElementName=TestGain, Path=Value, StringFormat={}{0:0} dB}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Grid>
               <TextBlock Text="{DynamicResource Label32}" FontSize="18" Margin="0,18,0,8"/>
               <WrapPanel Margin="0,0,0,10">
                 <Button Content="Studio" Tag="studio" Click="Preset_Click"/>
-                <Button Content="{DynamicResource Label33}" Tag="discord" Click="Preset_Click"/>
+                <Button Content="{DynamicResource Label33}" Tag="communication" Click="Preset_Click"/>
+                <Button Content="Gaming" Tag="gaming" Click="Preset_Click"/>
                 <Button Content="{DynamicResource Label34}" Tag="record" Click="Preset_Click"/>
                 <Button Content="{DynamicResource Label35}" Click="SaveStudio_Click"/>
               </WrapPanel>
@@ -184,7 +226,22 @@
                 <TextBlock Text="{DynamicResource Label41}"/>
                 <Slider Name="GateThreshold" Minimum="-65" Maximum="-20" Value="-45"/>
                 <TextBlock Text="{Binding ElementName=GateThreshold, Path=Value, StringFormat={}{0:0} dBFS}"/>
+                <TextBlock Text="{DynamicResource Attack}"/>
+                <Slider Name="GateAttack" Minimum="1" Maximum="100" Value="5" ToolTip="{DynamicResource Attack}"/>
+                <TextBlock Text="{Binding ElementName=GateAttack, Path=Value, StringFormat={}{0:0.0} ms}"/>
+                <TextBlock Text="{DynamicResource Hold}"/>
+                <Slider Name="GateHold" Minimum="0" Maximum="500" Value="0" ToolTip="{DynamicResource Hold}"/>
+                <TextBlock Text="{Binding ElementName=GateHold, Path=Value, StringFormat={}{0:0.0} ms}"/>
+                <TextBlock Text="{DynamicResource Release}"/>
+                <Slider Name="GateRelease" Minimum="10" Maximum="1000" Value="150" ToolTip="{DynamicResource Release}"/>
+                <TextBlock Text="{Binding ElementName=GateRelease, Path=Value, StringFormat={}{0:0.0} ms}"/>
                 <CheckBox Name="CompressorEnabled" Content="{DynamicResource Label42}" Foreground="White" IsChecked="True" Margin="0,4"/>
+                <TextBlock Text="{DynamicResource CompThreshold}"/>
+                <Slider Name="CompressorThreshold" Minimum="-48" Maximum="-3" Value="-18" ToolTip="{DynamicResource CompThreshold}"/>
+                <TextBlock Text="{Binding ElementName=CompressorThreshold, Path=Value, StringFormat={}{0:0.0} dBFS}"/>
+                <TextBlock Text="{DynamicResource Ratio}"/>
+                <Slider Name="CompressorRatio" Minimum="1" Maximum="12" Value="3" ToolTip="{DynamicResource Ratio}"/>
+                <TextBlock Text="{Binding ElementName=CompressorRatio, Path=Value, StringFormat={}{0:0.0} :1}"/>
                 <TextBlock Text="{DynamicResource Label43}"/>
                 <Slider Name="Presence" Minimum="-6" Maximum="6" Value="2"/>
                 <TextBlock Text="{Binding ElementName=Presence, Path=Value, StringFormat={}{0:0} dB}"/>
@@ -196,6 +253,51 @@
                 <Button Name="PlayButton" Content="{DynamicResource Label47}" Click="Play_Click" IsEnabled="False"/>
               </WrapPanel>
               <TextBlock Name="TestStatus" TextWrapping="Wrap" Margin="0,8,0,0"/>
+            </StackPanel>
+
+            <StackPanel Name="RoutesPanel" Visibility="Collapsed">
+              <TextBlock Text="{DynamicResource RouteAbout}" Foreground="{StaticResource Secondary}"/>
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Text="{DynamicResource Mode}" FontWeight="SemiBold"/>
+                  <ComboBox Name="RouteMode" SelectedIndex="0" SelectionChanged="RouteMode_Changed" Margin="0,0,0,8">
+                    <ComboBoxItem Content="{DynamicResource PlaybackRoute}"/>
+                    <ComboBoxItem Content="{DynamicResource VoiceRoute}"/>
+                    <ComboBoxItem Content="{DynamicResource HeadphoneRoute}"/>
+                  </ComboBox>
+                  <TextBlock Name="RouteHelp" TextWrapping="Wrap" Foreground="{StaticResource Secondary}"/>
+                  <TextBlock Text="{DynamicResource RouteSource}"/>
+                  <ComboBox Name="RouteInput" DisplayMemberPath="Label" Margin="0,0,0,8"/>
+                  <TextBlock Text="{DynamicResource RouteDestination}"/>
+                  <ComboBox Name="RouteOutput" DisplayMemberPath="Label" Margin="0,0,0,8"/>
+                  <StackPanel Name="PlaybackOptions">
+                    <CheckBox Name="RouteCompressor" Content="{DynamicResource Label42}"/>
+                    <CheckBox Name="RouteNormalizer" Content="{DynamicResource Normalize}"/>
+                  </StackPanel>
+                  <CheckBox Name="RouteConfirm"/>
+                  <CheckBox Name="MonitorOriginal" Content="{DynamicResource Label45}" Click="MonitorOriginal_Click" Visibility="Collapsed"/>
+                  <WrapPanel Margin="0,9,0,0">
+                    <Button Name="RouteStart" Content="{DynamicResource StartRoute}" Click="StartRoute_Click"/>
+                    <Button Name="RouteStop" Content="{DynamicResource Label19}" Click="StopRoute_Click" IsEnabled="False"/>
+                  </WrapPanel>
+                  <TextBlock Name="RouteStatus" Foreground="{StaticResource Secondary}"/>
+                  <TextBlock Name="RouteMetrics" Foreground="{StaticResource Secondary}"/>
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Text="{DynamicResource MeterTitle}" FontWeight="SemiBold"/>
+                  <TextBlock Name="SaturationStatus"/>
+                  <Canvas Name="RouteWave" Height="66" Background="#101015" ClipToBounds="True" Margin="0,0,0,8">
+                    <Polyline Name="DryWave" Stroke="#9791A9" StrokeThickness="1"/>
+                    <Polyline Name="WetWave" Stroke="{StaticResource Accent}" StrokeThickness="1"/>
+                  </Canvas>
+                  <TextBlock Text="{DynamicResource SpectrumTitle}"/>
+                  <Canvas Name="SpectrumCanvas" Height="78" Background="#101015" ClipToBounds="True">
+                    <Polyline Name="SpectrumLine" Stroke="{StaticResource Accent}" StrokeThickness="1.5"/>
+                  </Canvas>
+                </StackPanel>
+              </Border>
             </StackPanel>
             <StackPanel Name="SettingsPanel" Visibility="Collapsed">
               <CheckBox Name="AdvancedToggle" Content="{DynamicResource Label48}" IsChecked="True" Foreground="White" Click="Preferences_Click" Margin="0,0,0,8"/>

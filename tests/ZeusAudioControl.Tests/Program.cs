@@ -3,6 +3,56 @@ using ZeusAudioControl;
 
 var tests = new (string, Action)[]
 {
+    ("Route buffer bounds latency, counts drops and fills underflow with silence", () =>
+    {
+        var buffer = new RouteBuffer(WaveFormat.CreateIeeeFloatWaveFormat(1000, 1), 40);
+        var data = Enumerable.Range(0, 200).Select(i => (byte)i).ToArray();
+        buffer.Write(data, 120);
+        buffer.Write(data, 120);
+        Check(buffer.Overflows == 1 && buffer.BufferedMilliseconds <= 40);
+        var destination = new byte[160];
+        Check(buffer.Read(destination, 0, 160) == 160);
+        Check(buffer.Read(destination, 0, 160) == 160);
+        Check(buffer.Underflows > 0 && destination.All(value => value == 0));
+    }),
+    ("Bounded buffer survives repeated capture and render drift", () =>
+    {
+        var buffer = new RouteBuffer(WaveFormat.CreateIeeeFloatWaveFormat(48000, 2), 100);
+        var packet = new byte[480 * 8];
+        for (var i = 0; i < 10000; i++)
+        {
+            buffer.Write(packet, packet.Length);
+            if (i % 37 != 0) buffer.Read(packet, 0, packet.Length);
+            Check(buffer.BufferedMilliseconds <= 100);
+        }
+        Check(buffer.Overflows > 0);
+    }),
+    ("Playback dynamics bounds overload and normalizes a quiet stable signal", () =>
+    {
+        var limiter = new RouteDynamics(new Signal(1, _ => 5f), false, false, .85f);
+        var data = new float[48000];
+        limiter.Read(data, 0, data.Length);
+        Check(data.All(sample => sample == .85f));
+        var normalizer = new RouteDynamics(new Signal(1, _ => .04f), false, true, .85f);
+        normalizer.Read(data, 0, data.Length);
+        Check(data[^1] > .06f && data[^1] <= .08f);
+    }),
+    ("Spatialization delays the contralateral surround signal", () =>
+    {
+        var spatial = new StereoSpatializer(new Signal(6, i => i == 4 ? 1f : 0f));
+        var data = new float[500];
+        Check(spatial.Read(data, 0, data.Length) == data.Length);
+        Check(data[0] > 0 && data[1] == 0 && data[2 * 192 + 1] > 0);
+    }),
+    ("Channel test puts a tone only in the addressed channel", () =>
+    {
+        var bytes = StereoSignal.Create(5, 8, 48000);
+        Check(bytes.Length == 24000 * 16);
+        Check(BitConverter.ToInt16(bytes, 16 * 80 + 10) != 0);
+        Check(Enumerable.Range(0, 8).Where(channel => channel != 5)
+            .All(channel => BitConverter.ToInt16(bytes, 16 * 80 + channel * 2) == 0));
+    }),
+
     ("EQ attenuates peaks without leaking between channels", () =>
     {
         var eq = new LocalEq(new Signal(2, i => i % 2 == 0 ? 4f : 0f),
@@ -60,6 +110,18 @@ var tests = new (string, Action)[]
         Check(Finish(.001f, true) < Finish(.001f, false) / 10);
         Check(Finish(1, false) <= .35f);
     }),
+    ("Gate hold preserves quiet tails after a loud burst", () =>
+    {
+        float Tail(int hold)
+        {
+            var voice = new TestGainProvider(new Signal(1, i => i < 2400 ? .2f : .001f), 1,
+                true, false, true, -26, false, 0, 0, 1, hold, 10);
+            var data = new float[7200];
+            voice.Read(data, 0, data.Length);
+            return data[^1];
+        }
+        Check(Tail(200) > 10 * Tail(0));
+    }),
     ("Noise reduction attenuates a steady low-frequency tone without removing a louder voice-like segment", () =>
     {
         float[] Process(double strength)
@@ -110,6 +172,9 @@ var tests = new (string, Action)[]
             Check(imported.Voice == voice && imported.Equalizer!.SequenceEqual(gains));
             ProfileFile.Write(path, voice);
             Check(ExportedProfile.Load(path) == new ExportedProfile(0, voice, null));
+            File.WriteAllText(path, """{"Gain":6,"Enabled":true,"HighPass":true,"Gate":true,"Threshold":-45,"Compressor":true,"Presence":2}""");
+            var legacy = ExportedProfile.Load(path).Voice;
+            Check(legacy.Attack == 5 && legacy.Hold == 0 && legacy.Release == 150 && legacy.Ratio == 3);
             File.WriteAllText(path, "{");
             try { ExportedProfile.Load(path); }
             catch (System.Text.Json.JsonException) { return; }

@@ -16,8 +16,8 @@ public partial class MainWindow
         ("Atualizar dispositivos", "Refresh devices"),
         ("Áudio de saída", "Audio output"),
         ("Balanço estéreo (quando suportado)", "Stereo balance (if supported)"),
-        ("EQUALIZADOR • laboratório de áudio", "File equalizer"),
-        ("Ajustes aplicados à reprodução de arquivos dentro do ZEUS, não ao áudio global.", "Adjustments apply to files played in ZEUS."),
+        ("Equalizador", "Equalizer"),
+        ("Aplicado ao player local e às rotas de áudio de aplicativos.", "Applies to local playback and to app-audio routes."),
         ("Graves", "Low"),
         ("Médios", "Mid"),
         ("Agudos", "High"),
@@ -37,7 +37,7 @@ public partial class MainWindow
         ("Volume do microfone", "Microphone volume"),
         ("Silenciar microfone", "Mute microphone"),
         ("Intensidade do microfone", "Microphone level"),
-        ("Ganho digital para ouvir o teste (não altera Discord ou OBS)", "Digital gain for the local microphone test"),
+        ("Ganho digital do microfone", "Digital microphone gain"),
         ("VOICE STUDIO  /  TESTE LOCAL", "Voice studio"),
         ("Comunicação", "Communication"),
         ("Gravação", "Recording"),
@@ -45,12 +45,12 @@ public partial class MainWindow
         ("Ativar efeitos Studio", "Enable studio effects"),
         ("Filtro de graves (80 Hz)", "High-pass filter (80 Hz)"),
         ("Supressão de ruído adaptativa (local)", "Adaptive noise reduction (local)"),
-        ("Atenua ruído de fundo baixo; não separa vozes simultâneas. Apenas no teste local.", "Reduces low-level background noise in the local test."),
+        ("Atenua ruído de fundo baixo e constante no teste e nas rotas de microfone.", "Reduces steady low-level background noise in tests and microphone routes."),
         ("Noise Gate (reduz sons baixos)", "Noise gate"),
         ("Limiar do gate (dBFS)", "Gate threshold (dBFS)"),
         ("Compressor de voz", "Voice compressor"),
         ("Presença da voz (dB)", "Voice presence (dB)"),
-        ("Desative Studio para comparar com o teste anterior. Efeitos aplicados ao clicar em Ouvir teste; não alteram outros aplicativos.", "Voice effects apply when playing the recording in ZEUS."),
+        ("Compare o mesmo teste antes e depois. Em tempo real, abra Rotas.", "Compare the same recording before and after processing. For live monitoring, open Routes."),
         ("Comparar: ouvir áudio original (sem efeitos)", "Compare with original recording"),
         ("Gravar teste (5 s)", "Record test (5 s)"),
         ("Ouvir teste", "Play test"),
@@ -62,7 +62,7 @@ public partial class MainWindow
         ("Restaurar perfis padrão", "Restore default profiles"),
         ("Configurações locais", "Local settings"),
         ("Salvar seleção de dispositivos", "Save device selection"),
-        ("Status do motor: efeitos globais ainda indisponíveis. Os filtros de voz atuam apenas no teste local.", "Voice filters apply to the local test. System-wide effects are unavailable."),
+        ("A opção Rotas encaminha áudio entre endpoints. O ZEUS não altera os dispositivos padrão do Windows.", "Routes forward audio between endpoints. ZEUS leaves Windows default devices unchanged."),
         ("Desempenho", "Performance"),
         ("Centro", "Center"),
         ("Controles via Windows Core Audio. Sem alterações no driver ou firmware.", "Windows Core Audio controls. Driver and firmware stay intact."),
@@ -72,6 +72,7 @@ public partial class MainWindow
     private static readonly Dictionary<string, string> Messages = new()
     {
         ["Visão geral"] = "Overview",
+        ["Rotas"] = "Routes",
         ["Áudio"] = "Audio",
         ["Microfone"] = "Microphone",
         ["Configurações"] = "Settings",
@@ -110,6 +111,7 @@ public partial class MainWindow
         for (var i = 0; i < Labels.Length; i++)
             Resources["Label" + i] = english ? Labels[i].English : Labels[i].Portuguese;
         PageTitle.Text = T(_page);
+        UpdateRouteLabels();
         if (_tray?.ContextMenuStrip is { } menu)
         {
             menu.Items[0].Text = T("Abrir ZEUS");

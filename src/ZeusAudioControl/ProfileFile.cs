@@ -38,7 +38,9 @@ internal static class ProfileFile
 
 
 internal sealed record StudioProfile(double Gain, bool Enabled, bool HighPass, bool Gate,
-    double Threshold, bool Compressor, double Presence, double Noise = 0);
+    double Threshold, bool Compressor, double Presence, double Noise = 0,
+    double Attack = 5, double Hold = 0, double Release = 150,
+    double CompressorThreshold = -18.06179974, double Ratio = 3);
 
 internal sealed record ExportedProfile(int Version, StudioProfile Voice, double[]? Equalizer)
 {
@@ -76,7 +78,7 @@ internal sealed record ExportedProfile(int Version, StudioProfile Voice, double[
             throw new InvalidDataException("Invalid voice profile.");
 
         var profile = voice.Deserialize<StudioProfile>()!;
-        if (new[] { profile.Gain, profile.Threshold, profile.Presence, profile.Noise }.Any(v => !double.IsFinite(v)))
+        if (new[] { profile.Gain, profile.Threshold, profile.Presence, profile.Noise, profile.Attack, profile.Hold, profile.Release, profile.CompressorThreshold, profile.Ratio }.Any(v => !double.IsFinite(v)))
             throw new InvalidDataException("Invalid voice profile values.");
         return profile;
     }

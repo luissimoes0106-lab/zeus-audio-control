@@ -1,3 +1,4 @@
+using NAudio.Wave;
 using System.IO;
 using System.Windows.Media;
 using System;
@@ -35,9 +36,23 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        MigrateBeta04Settings();
         SetupEq();
         foreach (var slider in _bands.Concat([BassBoost, LowTone, MidTone, HighTone]))
-            slider.ValueChanged += (_, _) => UpdatePlaybackEq();
+            slider.ValueChanged += (_, _) =>
+            {
+                if (!_applyingEq) _eqProfile = "custom";
+                UpdatePlaybackEq();
+                PaintEqCurve();
+                UpdateDashboard();
+            };
+        foreach (var slider in new[] { TestGain, GateThreshold, GateAttack, GateHold, GateRelease,
+            CompressorThreshold, CompressorRatio, Presence, NoiseReduction })
+            slider.ValueChanged += (_, _) => { if (!_applyingStudio) _voiceProfile = "custom"; UpdateDashboard(); };
+        foreach (var box in new[] { StudioEnabled, GateEnabled, HighPass, CompressorEnabled })
+            box.Click += (_, _) => { _voiceProfile = "custom"; UpdateDashboard(); };
+        RouteInput.SelectionChanged += (_, _) => RouteConfirm.IsChecked = false;
+        RouteOutput.SelectionChanged += (_, _) => RouteConfirm.IsChecked = false;
         SetupTray();
         LoadAliases();
         RefreshDevices();
@@ -54,6 +69,7 @@ public partial class MainWindow : Window
             SystemEvents.SessionEnding -= OnSessionEnding;
             _closing = true;
             _timer.Stop();
+            _route?.Stop();
             PersistIfChanged();
             _tray?.ContextMenuStrip?.Dispose();
             _tray?.Dispose();
@@ -102,6 +118,10 @@ public partial class MainWindow : Window
         _updating = true;
         try
         {
+            var routeInput = Selected(RouteInput)?.ID;
+            var routeOutput = Selected(RouteOutput)?.ID;
+            RouteInput.ItemsSource = null;
+            RouteOutput.ItemsSource = null;
             var previousOutput = _preferredOutput;
             var previousInput = _preferredInput;
             OutputDevices.ItemsSource = null;
@@ -113,6 +133,7 @@ public partial class MainWindow : Window
             _ownedDevices.AddRange(capture);
             OutputDevices.ItemsSource = render.Select(Choice).ToArray();
             InputDevices.ItemsSource = capture.Select(Choice).ToArray();
+            UpdateRouteChoices(capture, render, routeInput, routeOutput);
             _signature = string.Join("|", render.Concat(capture).Select(d => d.ID).OrderBy(id => id));
             OutputDevices.SelectedItem = FindChoice(OutputDevices, previousOutput, fallback: true);
             InputDevices.SelectedItem = FindChoice(InputDevices, previousInput, fallback: true);
@@ -127,6 +148,7 @@ public partial class MainWindow : Window
         SyncOutput();
         SyncInput();
         ShowAliases();
+        UpdateDashboard();
     }
 
     private void UpdateDeviceStatus()
@@ -146,6 +168,7 @@ public partial class MainWindow : Window
         _preferredOutput = _output?.ID;
         SyncOutput();
         ShowAliases();
+        UpdateDashboard();
     }
 
     private void InputDevices_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -155,6 +178,7 @@ public partial class MainWindow : Window
         _preferredInput = _input?.ID;
         SyncInput();
         ShowAliases();
+        UpdateDashboard();
     }
 
     private void SyncOutput()
@@ -255,6 +279,7 @@ public partial class MainWindow : Window
 
     private void PollAudio()
     {
+        PollRoute();
         if (_updating || _testCapture is not null || _stereoPlayer is not null) return;
         try
         {
@@ -283,6 +308,7 @@ public partial class MainWindow : Window
                 _lastCpuAt = now;
             }
             PersistIfChanged();
+            UpdateDashboard();
             if (_page == "Áudio" && _ticks % 70 == 0) _diagnosedOutput = null;
             var devices = _enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active).ToList();
             string signature;
@@ -303,7 +329,10 @@ public partial class MainWindow : Window
     private NAudio.Wave.WaveOutEvent? _testPlayer;
     private NAudio.Wave.AudioFileReader? _testReader;
     private readonly string _testPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "zeus-" + Guid.NewGuid().ToString("N") + ".wav");
-    private readonly string _settingsPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZeusAudioControl", "devices.json");
+    private readonly string _settingsPath = Path.Combine(
+        Environment.GetEnvironmentVariable("ZEUS_UI_SMOKE_PROFILE") ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZeusAudioControl", "Beta05"),
+        "devices.json");
     private void Overview_Click(object sender, RoutedEventArgs e) => Navigate("Visão geral");
     private void Audio_Click(object sender, RoutedEventArgs e) => Navigate("Áudio");
     private void Microphone_Click(object sender, RoutedEventArgs e) => Navigate("Microfone");
@@ -317,26 +346,48 @@ public partial class MainWindow : Window
         AudioPanel.Visibility = page == "Áudio" ? Visibility.Visible : Visibility.Collapsed;
         MicPanel.Visibility = page == "Microfone" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = page == "Configurações" ? Visibility.Visible : Visibility.Collapsed;
+        RoutesPanel.Visibility = page == "Rotas" ? Visibility.Visible : Visibility.Collapsed;
+        MainScroll.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(.82, 1, TimeSpan.FromMilliseconds(130)));
         MainScroll.ScrollToTop();
     }
     private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
-    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value);
+    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value);
+    private bool _applyingStudio;
     private void ApplyStudio(StudioProfile p)
     {
-        TestGain.Value = Math.Clamp(p.Gain, 0, 24); StudioEnabled.IsChecked = p.Enabled;
-        HighPass.IsChecked = p.HighPass; GateEnabled.IsChecked = p.Gate;
-        GateThreshold.Value = Math.Clamp(p.Threshold, -65, -20); CompressorEnabled.IsChecked = p.Compressor;
-        Presence.Value = Math.Clamp(p.Presence, -6, 6); NoiseReduction.Value = Math.Clamp(p.Noise, 0, 100);
+        _applyingStudio = true;
+        try
+        {
+            TestGain.Value = Math.Clamp(p.Gain, 0, 24);
+            StudioEnabled.IsChecked = p.Enabled;
+            HighPass.IsChecked = p.HighPass;
+            GateEnabled.IsChecked = p.Gate;
+            GateThreshold.Value = Math.Clamp(p.Threshold, -65, -20);
+            CompressorEnabled.IsChecked = p.Compressor;
+            Presence.Value = Math.Clamp(p.Presence, -6, 6);
+            NoiseReduction.Value = Math.Clamp(p.Noise, 0, 100);
+            GateAttack.Value = Math.Clamp(p.Attack, 1, 100);
+            GateHold.Value = Math.Clamp(p.Hold, 0, 500);
+            GateRelease.Value = Math.Clamp(p.Release, 10, 1000);
+            CompressorThreshold.Value = Math.Clamp(p.CompressorThreshold, -48, -3);
+            CompressorRatio.Value = Math.Clamp(p.Ratio, 1, 12);
+        }
+        finally { _applyingStudio = false; }
     }
+
     private void Preset_Click(object sender, RoutedEventArgs e)
     {
-        var tag = (sender as Button)?.Tag as string;
-        ApplyStudio(tag switch {
-            "discord" => new StudioProfile(6, true, true, true, -38, true, 3),
-            "record" => new StudioProfile(3, true, true, false, -50, true, 1),
-            _ => new StudioProfile(6, true, true, true, -45, true, 2)
+        var tag = (sender as Button)?.Tag as string ?? "studio";
+        _voiceProfile = tag;
+        ApplyStudio(tag switch
+        {
+            "communication" => new StudioProfile(6, true, true, true, -38, true, 3, 60, 4, 65, 155, -20, 4),
+            "gaming" => new StudioProfile(5, true, true, true, -42, true, 2, 70, 3, 90, 140, -20, 3),
+            "record" => new StudioProfile(3, true, true, false, -50, true, 1, 25, 8, 0, 190, -15, 2.5),
+            _ => new StudioProfile(6, true, true, true, -45, true, 2, 40, 5, 55, 150, -18, 3)
         });
-        StudioStatus.Text = T("Perfil aplicado ao teste local. Ajuste conforme sua voz e salve se desejar.");
+        UpdateDashboard();
+        StudioStatus.Text = L("Perfil de voz aplicado. Reinicie uma rota de voz ativa para usar esses ajustes.", "Voice profile applied. Restart any active voice route to use these settings.");
     }
     private void SaveStudio_Click(object sender, RoutedEventArgs e)
     {
@@ -383,19 +434,42 @@ public partial class MainWindow : Window
 
     private string DescribeOutput()
     {
-        if (_output is null) return T("Selecione uma saída para verificar o formato.");
+        if (_output is null)
+        {
+            UpdateChannelTests(0);
+            return T("Selecione uma saída para verificar o formato.");
+        }
         using var client = _output.AudioClient;
         var format = client.MixFormat;
         var mask = ChannelLayout.GetMask(format);
+        UpdateChannelTests(format.Channels);
         var layout = format.Channels == 8 && mask is 0x63F or 0xFF
             ? T("Formato 7.1 anunciado pelo Windows. Confirme a saída física no teste de alto-falantes do Windows.")
             : _english ? $"{format.Channels} channel(s) in the current mix format." : $"{format.Channels} canal(is) no formato de mixagem atual.";
         return $"{layout} {format.SampleRate:N0} Hz.";
     }
 
-    private sealed record Preferences(bool Tray, bool Advanced, bool English);
+    private sealed record Preferences(bool Tray, bool Advanced, bool English, string EqProfile = "custom", string VoiceProfile = "custom");
     private string PreferencesPath => Path.Combine(Path.GetDirectoryName(_settingsPath)!, "preferences.json");
-    private Preferences CurrentPreferences() => new(TrayToggle.IsChecked == true, AdvancedToggle.IsChecked == true, EnglishToggle.IsChecked == true);
+    private Preferences CurrentPreferences() => new(TrayToggle.IsChecked == true, AdvancedToggle.IsChecked == true, EnglishToggle.IsChecked == true, _eqProfile, _voiceProfile);
+
+    private void MigrateBeta04Settings()
+    {
+        if (Environment.GetEnvironmentVariable("ZEUS_UI_SMOKE_PROFILE") is not null) return;
+        var directory = Path.GetDirectoryName(_settingsPath)!;
+        var previous = Path.GetDirectoryName(directory)!;
+        foreach (var file in new[] { "devices.json", "studio.json", "eq.json", "aliases.json", "preferences.json" })
+        {
+            var oldPath = Path.Combine(previous, file);
+            var newPath = Path.Combine(directory, file);
+            try
+            {
+                if (!File.Exists(newPath) && File.Exists(oldPath))
+                    ProfileFile.Write(newPath, ProfileFile.Read<System.Text.Json.JsonElement>(oldPath));
+            }
+            catch (Exception error) { Footer.Text = error.Message; }
+        }
+    }
 
     private void RestorePreferences()
     {
@@ -403,6 +477,8 @@ public partial class MainWindow : Window
         {
             if (!File.Exists(PreferencesPath)) return;
             var preferences = ProfileFile.Read<Preferences>(PreferencesPath);
+            _eqProfile = preferences.EqProfile;
+            _voiceProfile = preferences.VoiceProfile;
             TrayToggle.IsChecked = preferences.Tray;
             AdvancedToggle.IsChecked = preferences.Advanced;
             EnglishToggle.IsChecked = preferences.English;
@@ -516,7 +592,14 @@ public partial class MainWindow : Window
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
             if (RawPlayback.IsChecked == true) { _testReader.Volume = .35f; _testPlayer.Init(_testReader); }
-            else _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20), StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value)));
+            else
+            {
+                var profile = CurrentStudio();
+                _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader,
+                    (float)Math.Pow(10, profile.Gain / 20), profile.Enabled, profile.HighPass, profile.Gate, profile.Threshold,
+                    profile.Compressor, profile.Presence, profile.Noise, profile.Attack, profile.Hold, profile.Release,
+                    profile.CompressorThreshold, profile.Ratio)));
+            }
             var player = _testPlayer;
             player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>
             {
@@ -575,8 +658,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { Footer.Text = ex.Message; }
     }
-    private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControl") is string; } catch { } }
-    private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControl","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControl",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
+    private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControlBeta05") is string; } catch { } }
+    private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControlBeta05","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControlBeta05",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
     private void Export_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -595,6 +678,8 @@ public partial class MainWindow : Window
             var dialog = new OpenFileDialog { Filter = "ZEUS (*.json)|*.json" };
             if (dialog.ShowDialog() != true) return;
             var profile = ExportedProfile.Load(dialog.FileName);
+            _voiceProfile = "custom";
+            if (profile.Equalizer is not null) _eqProfile = "custom";
             ApplyStudio(profile.Voice);
             if (profile.Equalizer is { } values) ApplyEq(values);
             PersistIfChanged();
@@ -604,6 +689,7 @@ public partial class MainWindow : Window
 
     private void Reset_Click(object sender, RoutedEventArgs e)
     {
+        _voiceProfile = _eqProfile = "custom";
         ApplyStudio(new StudioProfile(6, true, true, true, -45, true, 2));
         ApplyEq(new double[14]);
         PersistIfChanged();
@@ -625,7 +711,7 @@ public partial class MainWindow : Window
             ProfileFile.Write(AliasPath, new Dictionary<string, string>());
             _aliases.Clear();
             using var startup = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            startup?.DeleteValue("ZeusAudioControl", throwOnMissingValue: false);
+            startup?.DeleteValue("ZeusAudioControlBeta05", throwOnMissingValue: false);
             AutoStart.IsChecked = false;
             _preferredOutput = _preferredInput = null;
             TrayToggle.IsChecked = AdvancedToggle.IsChecked = true;
@@ -642,11 +728,25 @@ public partial class MainWindow : Window
     private async void Stereo_Click(object sender, RoutedEventArgs e)
     {
         if (_output is null || _stereoPlayer is not null) return;
-        var side = (sender as Button)?.Tag as string == "1" ? 1 : 0;
-        using var stream = new MemoryStream(StereoSignal.Create(side));
-        using var wave = new NAudio.Wave.RawSourceWaveStream(stream, new NAudio.Wave.WaveFormat(48000, 16, 2));
+        if (!int.TryParse((sender as Button)?.Tag as string, out var side)) return;
         try
         {
+            using var device = _output.AudioClient;
+            var mix = device.MixFormat;
+            var samples = StereoSignal.Create(side, mix.Channels, mix.SampleRate);
+            var format = mix.Channels <= 2 ? new WaveFormat(mix.SampleRate, 16, mix.Channels) : mix;
+            if (mix.Channels > 2 && mix.BitsPerSample == 32 && mix is WaveFormatExtensible extended &&
+                extended.ToStandardWaveFormat().Encoding == WaveFormatEncoding.IeeeFloat)
+            {
+                var pcm = samples;
+                samples = new byte[pcm.Length * 2];
+                for (var i = 0; i < pcm.Length / 2; i++)
+                    System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(samples.AsSpan(i * 4, 4), BitConverter.ToInt16(pcm, i * 2) / 32768f);
+            }
+            else if (mix.Channels > 2 && mix.BitsPerSample != 16)
+                throw new NotSupportedException(L("Formato multicanal incompatível com o teste.", "Multichannel format unsupported by the test."));
+            using var stream = new MemoryStream(samples);
+            using var wave = new RawSourceWaveStream(stream, format);
             var player = _stereoPlayer = new NAudio.Wave.WasapiOut(_output, AudioClientShareMode.Shared, false, 100);
             player.Init(wave);
             player.Play();
@@ -662,8 +762,10 @@ public partial class MainWindow : Window
     }
 
     private static readonly double[] BandFrequencies = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+    private static readonly double[] EqFrequencies = BandFrequencies.Concat([120d, 1000d, 6500d]).ToArray();
+    private bool _applyingEq;
     private readonly List<Slider> _bands = new();
-    private NAudio.Wave.AudioFileReader? _eqReader;
+    private WaveStream? _eqReader;
     private LocalEq? _playbackEq;
     private NAudio.Wave.WaveOutEvent? _eqPlayer;
     private string EqPath => Path.Combine(Path.GetDirectoryName(_settingsPath)!, "eq.json");
@@ -701,15 +803,22 @@ public partial class MainWindow : Window
 
     private void ApplyEq(double[] values)
     {
-        for (var i = 0; i < 10; i++) _bands[i].Value = Math.Clamp(values[i], -12, 12);
-        BassBoost.Value = Math.Clamp(values[10], 0, 9);
-        LowTone.Value = values.Length == 14 ? Math.Clamp(values[11], -9, 9) : 0;
-        MidTone.Value = values.Length == 14 ? Math.Clamp(values[12], -9, 9) : 0;
-        HighTone.Value = values.Length == 14 ? Math.Clamp(values[13], -9, 9) : 0;
+        _applyingEq = true;
+        try
+        {
+            for (var i = 0; i < 10; i++) _bands[i].Value = Math.Clamp(values[i], -12, 12);
+            BassBoost.Value = Math.Clamp(values[10], 0, 9);
+            LowTone.Value = values.Length == 14 ? Math.Clamp(values[11], -9, 9) : 0;
+            MidTone.Value = values.Length == 14 ? Math.Clamp(values[12], -9, 9) : 0;
+            HighTone.Value = values.Length == 14 ? Math.Clamp(values[13], -9, 9) : 0;
+        }
+        finally { _applyingEq = false; }
     }
     private void EqPreset_Click(object sender, RoutedEventArgs e)
     {
         var preset = (sender as Button)?.Tag as string;
+        _eqProfile = preset ?? "custom";
+        UpdateDashboard();
         if (preset == "custom")
         {
             AdvancedToggle.IsChecked = true;
@@ -738,7 +847,14 @@ public partial class MainWindow : Window
     private double[] PlaybackGains() =>
         _bands.Select(band => band.Value).Concat([LowTone.Value, MidTone.Value, HighTone.Value]).ToArray();
 
-    private void UpdatePlaybackEq() => _playbackEq?.SetGains(PlaybackGains(), BassBoost.Value);
+    private void UpdatePlaybackEq()
+    {
+        var routeEq = _route is { } route ? Volatile.Read(ref route.Eq) : null;
+        if (_playbackEq is null && routeEq is null) return;
+        var gains = PlaybackGains();
+        _playbackEq?.SetGains(gains, BassBoost.Value);
+        routeEq?.SetGains(gains, BassBoost.Value);
+    }
 
     private void EqPlay_Click(object sender, RoutedEventArgs e)
     {
@@ -747,9 +863,28 @@ public partial class MainWindow : Window
             var dialog = new OpenFileDialog { Filter = "Audio|*.wav;*.mp3;*.aiff;*.wma" };
             if (dialog.ShowDialog() != true) return;
             StopEq();
-            _eqReader = new NAudio.Wave.AudioFileReader(dialog.FileName);
-            var player = _eqPlayer = new NAudio.Wave.WaveOutEvent();
-            var eq = _playbackEq = new LocalEq(_eqReader, BandFrequencies.Concat([120d, 1000d, 6500d]).ToArray(), PlaybackGains(), BassBoost.Value);
+            ISampleProvider source;
+            if (VirtualSurround.IsChecked == true)
+            {
+                if (!string.Equals(Path.GetExtension(dialog.FileName), ".wav", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(L("A espacialização exige WAV multicanal.", "Spatialization requires multichannel WAV."));
+                var input = new WaveFileReader(dialog.FileName);
+                _eqReader = input;
+                var channels = input.WaveFormat.Channels;
+                var mask = ChannelLayout.GetMask(input.WaveFormat);
+                if (!(channels == 6 && mask is 0x3F or 0x60F || channels == 8 && mask == 0x63F))
+                    throw new InvalidDataException(L("O WAV precisa declarar uma máscara 5.1 ou 7.1 compatível.", "The WAV must declare a supported 5.1 or 7.1 channel mask."));
+                var samples = new RawSourceWaveStream(input, input.WaveFormat.AsStandardWaveFormat()).ToSampleProvider();
+                source = new StereoSpatializer(samples);
+            }
+            else
+            {
+                var reader = new AudioFileReader(dialog.FileName);
+                _eqReader = reader;
+                source = reader;
+            }
+            var player = _eqPlayer = new WaveOutEvent();
+            var eq = _playbackEq = new LocalEq(source, EqFrequencies, PlaybackGains(), BassBoost.Value);
             player.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(eq));
             player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>
             {

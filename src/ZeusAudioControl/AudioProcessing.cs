@@ -64,18 +64,27 @@ internal sealed class TestGainProvider : ISampleProvider
     private readonly float gain;
     private readonly bool studio, gate, compressor;
     private readonly float threshold, attack, release;
+    private readonly float compressorThreshold, compressorExponent;
+    private readonly int holdFrames;
+    private readonly int[] gateHold;
     private readonly BiQuadFilter[] hp, eq;
     private readonly bool highPass;
     private readonly float[] envelope, gateGain;
     private int channel;
     private readonly float noiseStrength, noiseLearn, noiseSmooth;
     private readonly float[] noiseFloor, noiseGain;
-    public TestGainProvider(ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise)
+    public TestGainProvider(ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise,
+        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3)
     {
         this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
         threshold = (float)Math.Pow(10, thresholdDb / 20);
         int rate = source.WaveFormat.SampleRate, channels = source.WaveFormat.Channels;
-        attack = (float)Math.Exp(-1.0 / (rate * .005)); release = (float)Math.Exp(-1.0 / (rate * .15));
+        attack = (float)Math.Exp(-1000.0 / (rate * Math.Clamp(attackMs, 1, 100)));
+        release = (float)Math.Exp(-1000.0 / (rate * Math.Clamp(releaseMs, 10, 1000)));
+        holdFrames = (int)(rate * Math.Clamp(holdMs, 0, 500) / 1000);
+        gateHold = new int[channels];
+        compressorThreshold = (float)Math.Pow(10, Math.Clamp(compressorDb, -48, -3) / 20);
+        compressorExponent = (float)(1 - 1 / Math.Clamp(ratio, 1, 12));
         hp = new BiQuadFilter[channels]; eq = new BiQuadFilter[channels];
         envelope = new float[channels]; gateGain = new float[channels];
         noiseLearn = (float)(1 - Math.Exp(-1.0 / (rate * .18)));
@@ -112,13 +121,15 @@ internal sealed class TestGainProvider : ISampleProvider
                     v *= noiseGain[channel];
                 }
                 if (gate) {
-                    float target = envelope[channel] >= threshold ? 1f : .03f;
+                    if (envelope[channel] >= threshold) gateHold[channel] = holdFrames;
+                    else if (gateHold[channel] > 0) gateHold[channel]--;
+                    float target = envelope[channel] >= threshold || gateHold[channel] > 0 ? 1f : .03f;
                     float smooth = target > gateGain[channel] ? attack : release;
                     gateGain[channel] = smooth * gateGain[channel] + (1-smooth)*target;
                     v *= gateGain[channel];
                 }
-                if (compressor && envelope[channel] > .125f)
-                    v *= (float)Math.Pow(.125f / envelope[channel], .6667);
+                if (compressor && envelope[channel] > compressorThreshold)
+                    v *= (float)Math.Pow(compressorThreshold / envelope[channel], compressorExponent);
             }
             buffer[i] = .35f * (float)Math.Tanh(v * gain);
             channel = (channel + 1) % WaveFormat.Channels;
@@ -142,18 +153,133 @@ internal static class ChannelLayout
 
 internal static class StereoSignal
 {
-    public static byte[] Create(int channel)
+    public static byte[] Create(int channel, int channels = 2, int sampleRate = 48000)
     {
-        if (channel is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(channel));
-        const int sampleRate = 48000;
-        const int frames = sampleRate / 2;
-        var samples = new byte[frames * 4];
+        if (channels is < 1 or > 32) throw new ArgumentOutOfRangeException(nameof(channels));
+        if (channel < 0 || channel >= channels) throw new ArgumentOutOfRangeException(nameof(channel));
+        if (sampleRate is < 8000 or > 384000) throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        var frames = sampleRate / 2;
+        var samples = new byte[frames * channels * 2];
         for (var frame = 0; frame < frames; frame++)
         {
-            var fade = Math.Min(1, Math.Min(frame, frames - 1 - frame) / 480.0);
+            var fade = Math.Min(1, Math.Min(frame, frames - 1 - frame) / (sampleRate * .01));
             var sample = (short)(Math.Sin(frame * 2 * Math.PI * 440 / sampleRate) * 1800 * fade);
-            System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(samples.AsSpan(frame * 4 + channel * 2, 2), sample);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(samples.AsSpan((frame * channels + channel) * 2, 2), sample);
         }
         return samples;
+    }
+}
+
+internal sealed class RouteBuffer : IWaveProvider
+{
+    private readonly BufferedWaveProvider buffer;
+    private readonly object gate = new();
+    private long overflows, underflows;
+
+    public RouteBuffer(WaveFormat format, int milliseconds)
+    {
+        var frames = Math.Max(1, format.SampleRate * milliseconds / 1000);
+        buffer = new BufferedWaveProvider(format) { BufferLength = frames * format.BlockAlign };
+    }
+
+    public WaveFormat WaveFormat => buffer.WaveFormat;
+    public long Overflows => System.Threading.Interlocked.Read(ref overflows);
+    public long Underflows => System.Threading.Interlocked.Read(ref underflows);
+    public double BufferedMilliseconds
+    {
+        get { lock (gate) return buffer.BufferedDuration.TotalMilliseconds; }
+    }
+
+    public void Write(byte[] data, int count)
+    {
+        lock (gate)
+        {
+            if (count == 0) return;
+            if (count + buffer.BufferedBytes > buffer.BufferLength)
+            {
+                buffer.ClearBuffer();
+                System.Threading.Interlocked.Increment(ref overflows);
+            }
+            var keep = Math.Min(count, buffer.BufferLength);
+            buffer.AddSamples(data, count - keep, keep);
+        }
+    }
+
+    public int Read(byte[] destination, int offset, int count)
+    {
+        lock (gate)
+        {
+            if (buffer.BufferedBytes < count)
+                System.Threading.Interlocked.Increment(ref underflows);
+            return buffer.Read(destination, offset, count);
+        }
+    }
+}
+
+internal sealed class RouteDynamics(ISampleProvider source, bool compressor, bool normalize, float cap) : ISampleProvider
+{
+    private float peak;
+    private float power;
+    private readonly float peakRelease = (float)Math.Exp(-1.0 / (source.WaveFormat.SampleRate * source.WaveFormat.Channels * .12));
+    private readonly float smoothing = (float)(1 - Math.Exp(-1.0 / (source.WaveFormat.SampleRate * source.WaveFormat.Channels * .5)));
+
+    public WaveFormat WaveFormat => source.WaveFormat;
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        var read = source.Read(buffer, offset, count);
+        for (var i = offset; i < offset + read; i++)
+        {
+            var sample = float.IsFinite(buffer[i]) ? buffer[i] : 0;
+            if (compressor) peak = Math.Max(Math.Abs(sample), peak * peakRelease);
+            if (normalize) power += smoothing * (sample * sample - power);
+            var gain = normalize ? Math.Clamp(.14f / MathF.Sqrt(Math.Max(.0001f, power)), .25f, 2f) : 1f;
+            if (compressor && peak * gain > .22f)
+                gain *= MathF.Pow(.22f / (peak * gain), .75f);
+            buffer[i] = Math.Clamp(sample * gain, -cap, cap);
+        }
+        return read;
+    }
+}
+
+/// <summary>Stereo spatialization of canonical WAVE channel order using crossfeed and short delays.</summary>
+internal sealed class StereoSpatializer : ISampleProvider
+{
+    private readonly ISampleProvider source;
+    private readonly float[] leftDelay;
+    private readonly float[] rightDelay;
+    private float[] work = [];
+    private int cursor;
+
+    public StereoSpatializer(ISampleProvider source)
+    {
+        if (source.WaveFormat.Channels is not (6 or 8)) throw new ArgumentException("Expected 5.1 or 7.1 PCM.");
+        this.source = source;
+        WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(source.WaveFormat.SampleRate, 2);
+        leftDelay = new float[Math.Max(1, WaveFormat.SampleRate * 4 / 1000)];
+        rightDelay = new float[leftDelay.Length];
+    }
+
+    public WaveFormat WaveFormat { get; }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        var channels = source.WaveFormat.Channels;
+        var requested = count / 2 * channels;
+        if (work.Length < requested) work = new float[requested];
+        var frames = source.Read(work, 0, requested) / channels;
+        for (var frame = 0; frame < frames; frame++)
+        {
+            var i = frame * channels;
+            var center = work[i + 2] * .707f + work[i + 3] * .20f;
+            var rearLeft = work[i + 4] * .60f + (channels == 8 ? work[i + 6] * .50f : 0);
+            var rearRight = work[i + 5] * .60f + (channels == 8 ? work[i + 7] * .50f : 0);
+            buffer[offset + frame * 2] = .38f * (work[i] + center + rearLeft + .30f * rightDelay[cursor]);
+            buffer[offset + frame * 2 + 1] = .38f * (work[i + 1] + center + rearRight + .30f * leftDelay[cursor]);
+            leftDelay[cursor] = rearLeft;
+            rightDelay[cursor] = rearRight;
+            cursor = (cursor + 1) % leftDelay.Length;
+        }
+        return frames * 2;
     }
 }
