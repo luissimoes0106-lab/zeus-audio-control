@@ -261,7 +261,7 @@ public partial class MainWindow : Window
             _testReader = new NAudio.Wave.AudioFileReader(_testPath);
             _testReader.Volume = 1f;
             _testPlayer = new NAudio.Wave.WaveOutEvent();
-            _testPlayer.Init(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20)));
+            _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader, (float)Math.Pow(10, TestGain.Value / 20))));
             _testPlayer.Play();
         } catch (Exception ex) { TestStatus.Text = ex.Message; }
     }
