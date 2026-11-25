@@ -205,10 +205,20 @@ public partial class MainWindow : Window
     private NAudio.Wave.AudioFileReader? _testReader;
     private readonly string _testPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "zeus-" + Guid.NewGuid().ToString("N") + ".wav");
     private readonly string _settingsPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZeusAudioControl", "devices.json");
-    private void Overview_Click(object sender, RoutedEventArgs e) => MainScroll.ScrollToTop();
-    private void Audio_Click(object sender, RoutedEventArgs e) => AudioHeading.BringIntoView();
-    private void Microphone_Click(object sender, RoutedEventArgs e) => MicHeading.BringIntoView();
-    private void Settings_Click(object sender, RoutedEventArgs e) => SettingsHeading.BringIntoView();
+    private void Overview_Click(object sender, RoutedEventArgs e) => Navigate("Visão geral");
+    private void Audio_Click(object sender, RoutedEventArgs e) => Navigate("Áudio");
+    private void Microphone_Click(object sender, RoutedEventArgs e) => Navigate("Microfone");
+    private void Settings_Click(object sender, RoutedEventArgs e) => Navigate("Configurações");
+    private void Navigate(string page)
+    {
+        PageTitle.Text = page;
+        OverviewPanel.Visibility = page == "Visão geral" ? Visibility.Visible : Visibility.Collapsed;
+        ControlsCard.Visibility = page == "Visão geral" ? Visibility.Collapsed : Visibility.Visible;
+        AudioPanel.Visibility = page == "Áudio" ? Visibility.Visible : Visibility.Collapsed;
+        MicPanel.Visibility = page == "Microfone" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPanel.Visibility = page == "Configurações" ? Visibility.Visible : Visibility.Collapsed;
+        MainScroll.ScrollToTop();
+    }
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         try {
