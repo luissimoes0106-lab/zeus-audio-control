@@ -25,6 +25,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         RefreshDevices();
         RestoreSelection();
+        RestoreStudio();
         _timer.Tick += (_, _) => PollAudio();
         _timer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
@@ -218,6 +219,40 @@ public partial class MainWindow : Window
         MicPanel.Visibility = page == "Microfone" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPanel.Visibility = page == "Configurações" ? Visibility.Visible : Visibility.Collapsed;
         MainScroll.ScrollToTop();
+    }
+    private sealed record StudioProfile(double Gain, bool Enabled, bool HighPass, bool Gate, double Threshold, bool Compressor, double Presence);
+    private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
+    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value);
+    private void ApplyStudio(StudioProfile p)
+    {
+        TestGain.Value = Math.Clamp(p.Gain, 0, 24); StudioEnabled.IsChecked = p.Enabled;
+        HighPass.IsChecked = p.HighPass; GateEnabled.IsChecked = p.Gate;
+        GateThreshold.Value = Math.Clamp(p.Threshold, -65, -20); CompressorEnabled.IsChecked = p.Compressor;
+        Presence.Value = Math.Clamp(p.Presence, -6, 6);
+    }
+    private void Preset_Click(object sender, RoutedEventArgs e)
+    {
+        var tag = (sender as Button)?.Tag as string;
+        ApplyStudio(tag switch {
+            "discord" => new StudioProfile(6, true, true, true, -38, true, 3),
+            "record" => new StudioProfile(3, true, true, false, -50, true, 1),
+            _ => new StudioProfile(6, true, true, true, -45, true, 2)
+        });
+        StudioStatus.Text = "Perfil aplicado ao teste local. Ajuste conforme sua voz e salve se desejar.";
+    }
+    private void SaveStudio_Click(object sender, RoutedEventArgs e)
+    {
+        try {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!);
+            System.IO.File.WriteAllText(StudioPath, System.Text.Json.JsonSerializer.Serialize(CurrentStudio()));
+            StudioStatus.Text = "Perfil personalizado salvo.";
+        } catch (Exception ex) { StudioStatus.Text = ex.Message; }
+    }
+    private void RestoreStudio()
+    {
+        try {
+            if (System.IO.File.Exists(StudioPath) && System.Text.Json.JsonSerializer.Deserialize<StudioProfile>(System.IO.File.ReadAllText(StudioPath)) is StudioProfile p) ApplyStudio(p);
+        } catch (Exception ex) { StudioStatus.Text = ex.Message; }
     }
     private void Save_Click(object sender, RoutedEventArgs e)
     {
