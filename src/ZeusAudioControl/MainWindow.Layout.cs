@@ -16,6 +16,14 @@ public partial class MainWindow
         brandingDialog.Close();
         VerifyDialog("ZEUS Intelligence Pack", Intelligence_Click);
         VerifyDialog("ZEUS Audio Mixer", Mixer_Click);
+        VerifyDialog("ZEUS Gaming Mode", Gaming_Click);
+        VerifyDialog("H510-PRO · USB/HID", H510Diagnostics_Click);
+        var hidReport = H510Diagnostics.Inspect();
+        if (!hidReport.Contains("040B:0897", StringComparison.Ordinal) ||
+            !hidReport.Contains("Battery percentage unavailable", StringComparison.Ordinal))
+            throw new InvalidOperationException("Safe HID inspection did not report an unavailable battery value.");
+        if (GameExecutable(Environment.ProcessId) is null)
+            throw new InvalidOperationException("The limited Windows executable-path query failed for ZEUS.");
         VerifyDialog("ZEUS Quick Control", QuickControl_Click);
         var sizes = new[] { new Size(630, 500), new Size(860, 620), new Size(1180, 760) };
         var pages = new (string Page, FrameworkElement Panel)[]

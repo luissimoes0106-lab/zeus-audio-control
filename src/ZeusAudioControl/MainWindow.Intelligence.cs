@@ -15,6 +15,10 @@ public partial class MainWindow
     private sealed class IntelligenceSettings
     {
         public bool Automation { get; set; }
+        public bool GamingAuto { get; set; }
+        public bool GamingLowLatency { get; set; }
+        public List<GamingBinding> Games { get; set; } = [];
+        public string? CommunicationsApp { get; set; }
         public List<AppProfile> Profiles { get; set; } = [];
         public Dictionary<string, EndpointPreference> Endpoints { get; set; } = [];
         public Dictionary<string, float> Sessions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -151,6 +155,7 @@ public partial class MainWindow
             }
         }
         PollForeground();
+        PollGaming();
     }
 
     private void PollForeground()

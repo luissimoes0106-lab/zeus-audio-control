@@ -39,6 +39,8 @@ public partial class MainWindow
         ("RouteDestination", "Saída da rota", "Route output"),
         ("OutputCompressor", "Compressor de saída", "Output compressor"),
         ("Normalize", "Smart Volume", "Smart Volume"),
+        ("GamingImmersiveLabel", "Gaming Imersivo", "Gaming Immersive"),
+        ("GamingVoiceAgcLabel", "Ganho automático de voz", "Automatic voice gain"),
         ("LowLatency", "Baixa latência (experimental)", "Low latency (experimental)"),
         ("VoiceShield", "Voice Shield · reforço adaptativo de voz", "Voice Shield · adaptive voice protection"),
         ("StartRoute", "Iniciar rota", "Start route"),
@@ -69,6 +71,7 @@ public partial class MainWindow
         {
             RouteInput.SelectedItem = null;
             RouteOutput.SelectedItem = null;
+            RouteLowLatency.IsChecked = SelectedRouteKind == RouteKind.Playback && _intelligence.GamingLowLatency;
         }
         RouteConfirm.IsChecked = false;
         UpdateRouteLabels();
@@ -239,6 +242,7 @@ public partial class MainWindow
         OverviewInput.Text = _input is null ? L("Entrada desconectada", "Input disconnected") : Choice(_input).Label;
         var eq = _eqProfile switch
         {
+            "fps" => "Gaming FPS", "immersive" => L("Gaming Imersivo", "Gaming Immersive"),
             "game" => "Gaming", "music" => L("Música", "Music"), "movie" => L("Filmes", "Movies"),
             "flat" => "Flat", _ => L("Personalizado", "Custom")
         };
@@ -283,7 +287,8 @@ public partial class MainWindow
             else if (voice.Studio.Shield && voice.Studio.Enabled)
                 effects += " · Voice Shield";
         }
-        OverviewFilters.Text = $"{scope} · {effects}";
+        var gaming = _gamingManualEq is not null ? " · Gaming (manual)" : _gamingDetectedName is { } game ? $" · Gaming ({game})" : "";
+        OverviewFilters.Text = $"{scope} · {effects}{gaming}";
     }
 
     private void PollRoute()

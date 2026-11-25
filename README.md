@@ -1,4 +1,4 @@
-# ZEUS Audio Control Beta 0.7.1
+# ZEUS Audio Control Beta 0.7.2
 
 Aplicativo offline, gratuito e de código aberto para controlar e processar áudio no Windows. A Beta 0.7 inclui um painel de dispositivos, equalizador de dez bandas, controles de voz, rotas WASAPI e diagnóstico de latência. Licença MIT.
 
@@ -26,10 +26,12 @@ dotnet build src/ZeusAudioControl -c Release -r win-x64
 dotnet run --project src/ZeusAudioControl
 ```
 
-O GitHub Actions testa e compila em Windows, gera instalador/ZIP/hashes, valida a interface em tamanhos diferentes e testa instalação e remoção no runner Windows. Tags `v0.7.1-beta*` preparam um pré-lançamento em rascunho.
+O GitHub Actions testa e compila em Windows, gera instalador/ZIP/hashes, valida a interface em tamanhos diferentes e testa instalação e remoção no runner Windows. Tags `v0.7.2-beta*` preparam um pré-lançamento em rascunho.
 
 **Sobre o ZEUS** abre a verificação de versões públicas no GitHub quando solicitada. O download e a execução do instalador são manuais. Os controles de áudio continuam disponíveis offline.
 
 Consulte a [matriz operacional da Beta 0.7](docs/BETA-0.7-OPERACIONAL.md) para usar rotas simultâneas, Smart Volume, Voice Shield e recuperação de atualizações.
 
 A Beta 0.7.1 acrescenta o [ZEUS Intelligence Pack](docs/BETA-0.7.1-INTELLIGENCE.md) e usa a mesma pasta e os mesmos perfis da Beta 0.7.
+
+A Beta 0.7.2 integra o [ZEUS Gaming Mode e o diagnóstico seguro do H510-PRO Wireless](docs/BETA-0.7.2-GAMING.md).

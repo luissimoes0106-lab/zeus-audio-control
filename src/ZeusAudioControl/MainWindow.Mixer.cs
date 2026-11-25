@@ -87,7 +87,12 @@ public partial class MainWindow
             }
             catch (Exception error) when (error is IOException or ArgumentException or System.ComponentModel.Win32Exception) { }
         }
-        header.Children.Add(new TextBlock { Text = entry.Name, TextWrapping = TextWrapping.Wrap });
+        var role = entry.Path is not { } path ? "" :
+            string.Equals(path, _intelligence.CommunicationsApp, StringComparison.OrdinalIgnoreCase)
+                ? L(" · Comunicação", " · Communications")
+                : _intelligence.Games.Any(rule => string.Equals(rule.Executable, path, StringComparison.OrdinalIgnoreCase))
+                    ? L(" · Jogo", " · Game") : "";
+        header.Children.Add(new TextBlock { Text = entry.Name + role, TextWrapping = TextWrapping.Wrap });
         row.Children.Add(header);
         var level = new Slider { Minimum = 0, Maximum = 100, Value = entry.Level * 100, TabIndex = 0 };
         System.Windows.Automation.AutomationProperties.SetName(level, entry.Name);

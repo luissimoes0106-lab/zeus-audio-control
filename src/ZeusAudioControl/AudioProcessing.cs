@@ -93,14 +93,25 @@ internal sealed class TestGainProvider : ISampleProvider
     private int channel;
     private readonly float noiseStrength, noiseLearn, noiseSmooth, noiseCeiling;
     private readonly float[] noiseFloor, noiseGain;
+    private readonly bool automaticGain;
+    private readonly float[]? speechGain;
+    private readonly float gainAttack, gainRelease;
     public TestGainProvider(ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise,
-        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3, bool shield = false)
+        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3, bool shield = false, bool automaticGain = false)
     {
         this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
         threshold = (float)Math.Pow(10, thresholdDb / 20);
         int rate = source.WaveFormat.SampleRate, channels = source.WaveFormat.Channels;
         attack = (float)Math.Exp(-1000.0 / (rate * Math.Clamp(attackMs, 1, 100)));
         release = (float)Math.Exp(-1000.0 / (rate * Math.Clamp(releaseMs, 10, 1000)));
+        this.automaticGain = automaticGain;
+        if (automaticGain)
+        {
+            speechGain = new float[channels];
+            Array.Fill(speechGain, 1f);
+        }
+        gainAttack = (float)(1 - Math.Exp(-1.0 / (rate * .09)));
+        gainRelease = (float)(1 - Math.Exp(-1.0 / (rate * .65)));
         holdFrames = (int)(rate * Math.Clamp(holdMs, 0, 500) / 1000);
         gateHold = new int[channels];
         compressorThreshold = (float)Math.Pow(10, Math.Clamp(compressorDb, -48, -3) / 20);
@@ -149,8 +160,17 @@ internal sealed class TestGainProvider : ISampleProvider
                     gateGain[channel] = smooth * gateGain[channel] + (1-smooth)*target;
                     v *= gateGain[channel];
                 }
-                if (compressor && envelope[channel] > compressorThreshold)
-                    v *= (float)Math.Pow(compressorThreshold / envelope[channel], compressorExponent);
+                if (automaticGain && speechGain is { } auto)
+                {
+                    var voice = envelope[channel];
+                    var minimum = Math.Max(threshold * 2, noiseFloor[channel] * 2.5f);
+                    var wanted = voice >= minimum ? Math.Clamp(.09f / Math.Max(.0001f, voice * gain), .45f, 3f) : 1f;
+                    auto[channel] += (wanted < auto[channel] ? gainAttack : gainRelease) * (wanted - auto[channel]);
+                    v *= auto[channel];
+                }
+                var compressedLevel = envelope[channel] * (speechGain?[channel] ?? 1);
+                if (compressor && compressedLevel > compressorThreshold)
+                    v *= (float)Math.Pow(compressorThreshold / compressedLevel, compressorExponent);
             }
             buffer[i] = .35f * (float)Math.Tanh(v * gain);
             channel = (channel + 1) % WaveFormat.Channels;

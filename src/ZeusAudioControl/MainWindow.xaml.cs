@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         MigrateEarlierSettings();
         StartIntelligence();
+        RouteLowLatency.IsChecked = _intelligence.GamingLowLatency;
         SetupEq();
         foreach (var slider in _bands.Concat([BassBoost, LowTone, MidTone, HighTone]))
             slider.ValueChanged += (_, _) =>
@@ -373,7 +374,7 @@ public partial class MainWindow : Window
         MainScroll.ScrollToTop();
     }
     private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
-    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value, VoiceShield.IsChecked == true);
+    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value, VoiceShield.IsChecked == true, GamingVoiceAgc.IsChecked == true);
     private bool _applyingStudio;
     private void ApplyStudio(StudioProfile p)
     {
@@ -394,6 +395,7 @@ public partial class MainWindow : Window
             CompressorThreshold.Value = Math.Clamp(p.CompressorThreshold, -48, -3);
             CompressorRatio.Value = Math.Clamp(p.Ratio, 1, 12);
             VoiceShield.IsChecked = p.Shield;
+            GamingVoiceAgc.IsChecked = p.AutomaticGain;
         }
         finally { _applyingStudio = false; }
     }
@@ -405,7 +407,7 @@ public partial class MainWindow : Window
         ApplyStudio(tag switch
         {
             "communication" => new StudioProfile(6, true, true, true, -38, true, 3, 60, 4, 65, 155, -20, 4),
-            "gaming" => new StudioProfile(5, true, true, true, -42, true, 2, 70, 3, 90, 140, -20, 3),
+            "gaming" => GamingVoiceProfile,
             "record" => new StudioProfile(3, true, true, false, -50, true, 1, 25, 8, 0, 190, -15, 2.5),
             _ => new StudioProfile(6, true, true, true, -45, true, 2, 40, 5, 55, 150, -18, 3)
         });
@@ -627,7 +629,7 @@ public partial class MainWindow : Window
                 _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader,
                     (float)Math.Pow(10, profile.Gain / 20), profile.Enabled, profile.HighPass, profile.Gate, profile.Threshold,
                     profile.Compressor, profile.Presence, profile.Noise, profile.Attack, profile.Hold, profile.Release,
-                    profile.CompressorThreshold, profile.Ratio, profile.Shield)));
+                    profile.CompressorThreshold, profile.Ratio, profile.Shield, profile.AutomaticGain)));
             }
             var player = _testPlayer;
             player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>
@@ -861,12 +863,13 @@ public partial class MainWindow : Window
         }
         double[] gains = preset switch
         {
+            "fps" or "immersive" => GamingRules.Preset(preset).Take(10).ToArray(),
             "game" => [-3, -2, -1, 0, 1, 2, 4, 4, 2, 0],
             "music" => [3, 3, 2, 0, -1, 0, 1, 2, 3, 2],
             "movie" => [4, 3, 2, 0, 0, 2, 2, 1, 0, 0],
             _ => new double[10]
         };
-        ApplyEq(gains.Concat(new double[4]).ToArray());
+        ApplyEq(preset is "fps" or "immersive" ? GamingRules.Preset(preset) : gains.Concat(new double[4]).ToArray());
     }
 
     private void StopEq()
@@ -889,7 +892,7 @@ public partial class MainWindow : Window
         _playbackEq?.SetGains(gains, BassBoost.Value);
         if (routeEq is not null)
         {
-            if (_automaticEq is { } automatic)
+            if (GamingRules.RouteEq(_gamingManualEq, _gamingDetectedEq, _automaticEq) is { } automatic)
             {
                 var bands = automatic.Take(10).Concat(automatic.Length == 14 ? automatic.Skip(11) : new double[3]).ToArray();
                 routeEq.SetGains(bands, automatic[10]);

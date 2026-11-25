@@ -3,6 +3,39 @@ using ZeusAudioControl;
 
 var tests = new (string, Action)[]
 {
+    ("Gaming presets differ and an exited game restores the prior profile", () =>
+    {
+        var fps = GamingRules.Preset("fps");
+        var immersive = GamingRules.Preset("immersive");
+        Check(fps[6] > immersive[6] && immersive[1] > fps[1] && immersive[10] > fps[10]);
+        GamingBinding[] bindings = [new("C:/one.exe", "fps", 1), new("C:/two.exe", "immersive", 5)];
+        Check(GamingRules.Match(bindings, ["c:/ONE.exe", "C:/two.exe"])?.Preset == "immersive");
+        Check(GamingRules.Match(bindings, ["D:/two.exe"]) is null);
+        Check(GamingRules.RouteEq(null, fps, immersive) == fps);
+        Check(GamingRules.RouteEq(null, null, immersive) == immersive);
+        Check(GamingRules.RouteEq(immersive, fps, null) == immersive);
+    }),
+    ("Gaming Voice AGC lifts quiet speech while leaving background below the gate", () =>
+    {
+        float Measure(bool automaticGain, float amplitude)
+        {
+            var input = new Signal(1, i => amplitude * MathF.Sin(i * MathF.PI * 2 * 600 / 48000));
+            var voice = new TestGainProvider(input, 1, true, true, true, -43, true, 0, 0, automaticGain: automaticGain);
+            var data = new float[96000];
+            voice.Read(data, 0, data.Length);
+            return data.Skip(48000).Max(Math.Abs);
+        }
+        Check(Measure(true, .035f) > 1.25f * Measure(false, .035f));
+        Check(Measure(true, .001f) <= Measure(false, .001f) * 1.05f);
+        Check(Measure(true, .9f) <= .35f);
+    }),
+    ("H510 diagnostics matches the exact receiver pair", () =>
+    {
+        Check(H510Diagnostics.IsReceiverPath("#HID#VID_040B&PID_0897&MI_03#collection"));
+        Check(H510Diagnostics.IsReceiverPath(@"USB\VID_040B&PID_0897\receiver"));
+        Check(!H510Diagnostics.IsReceiverPath("#HID#VID_040B&PID_08970#collection"));
+        Check(!H510Diagnostics.IsReceiverPath("#HID#VID_040B#PID_0897#collection"));
+    }),
     ("Battery preserves zero and rejects readings outside the hardware range", () =>
     {
         Check(IntelligenceRules.BatteryPercent(0) == 0 && IntelligenceRules.BatteryPercent(100) == 100);

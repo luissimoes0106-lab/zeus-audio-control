@@ -151,6 +151,8 @@
                   <WrapPanel>
                     <Button Content="{DynamicResource Label15}" Tag="custom" Click="EqPreset_Click"/>
                     <Button Content="Gaming" Tag="game" Click="EqPreset_Click"/>
+                    <Button Content="Gaming FPS" Tag="fps" Click="EqPreset_Click"/>
+                    <Button Content="{DynamicResource GamingImmersiveLabel}" Tag="immersive" Click="EqPreset_Click"/>
                     <Button Content="{DynamicResource Label16}" Tag="music" Click="EqPreset_Click"/>
                     <Button Content="{DynamicResource Label17}" Tag="movie" Click="EqPreset_Click"/>
                     <Button Content="Flat" Tag="flat" Click="EqPreset_Click"/>
@@ -215,6 +217,7 @@
               <TextBlock Name="StudioStatus" TextWrapping="Wrap"/>
               <CheckBox Name="StudioEnabled" Content="{DynamicResource Label36}" Foreground="White" IsChecked="True" Margin="0,4"/>
               <StackPanel Name="AdvancedMic">
+                <CheckBox Name="GamingVoiceAgc" Content="{DynamicResource GamingVoiceAgcLabel}"/>
                 <CheckBox Name="VoiceShield" Content="{DynamicResource VoiceShield}"/>
                 <CheckBox Name="HighPass" Content="{DynamicResource Label37}" Foreground="White" IsChecked="True" Margin="0,4"/>
                 <TextBlock Text="{DynamicResource Label38}" Margin="0,10,0,2"/>

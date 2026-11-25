@@ -14,6 +14,12 @@ public partial class MainWindow
         var panel = new StackPanel();
         body.Children.Add(new ScrollViewer { Content = panel, MaxHeight = 430, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
 
+        var gaming = new Button { Content = "ZEUS Gaming Mode" };
+        gaming.Click += Gaming_Click;
+        panel.Children.Add(gaming);
+        var hid = new Button { Content = L("Diagnóstico H510-PRO USB/HID", "H510-PRO USB/HID diagnostics") };
+        hid.Click += H510Diagnostics_Click;
+        panel.Children.Add(hid);
         var mixer = new Button { Content = "ZEUS Audio Mixer" };
         mixer.Click += Mixer_Click;
         panel.Children.Add(mixer);

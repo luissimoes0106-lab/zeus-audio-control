@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>Zeus.ico</ApplicationIcon>
-    <Version>0.7.1-beta</Version>
+    <Version>0.7.2-beta</Version>
     <AssemblyName>ZeusAudioControl</AssemblyName>
     <Product>ZEUS Audio Control</Product>
     <Description>Windows audio processing, endpoint routing and microphone monitoring.</Description>

@@ -49,8 +49,11 @@ public partial class MainWindow
         var mixer = new Button { Content = "ZEUS Audio Mixer" };
         mixer.Click += Mixer_Click;
         body.Children.Add(mixer);
+        var gaming = new Button { Content = "ZEUS Gaming Mode" };
+        gaming.Click += Gaming_Click;
+        body.Children.Add(gaming);
         var presets = new WrapPanel();
-        foreach (var (label, key) in new[] { ("Gaming", "game"), (L("Música", "Music"), "music"), (L("Filmes", "Movies"), "movie"), ("Flat", "flat") })
+        foreach (var (label, key) in new[] { ("Gaming FPS", "fps"), (L("Gaming Imersivo", "Gaming Immersive"), "immersive"), (L("Música", "Music"), "music"), (L("Filmes", "Movies"), "movie"), ("Flat", "flat") })
         {
             var preset = new Button { Content = label, Tag = key };
             preset.Click += EqPreset_Click;
@@ -94,7 +97,7 @@ public partial class MainWindow
     private void AboutZeus_Click(object sender, RoutedEventArgs e)
     {
         var (window, body) = BrandWindow(L("Sobre o ZEUS", "About ZEUS"));
-        body.Children.Add(new TextBlock { Text = "ZEUS Audio Control · Beta 0.7.1", FontWeight = FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = "ZEUS Audio Control · Beta 0.7.2", FontWeight = FontWeights.SemiBold });
         var releases = new Button
         {
             Content = L("Ver versões no GitHub", "View releases on GitHub"),
@@ -200,7 +203,7 @@ public partial class MainWindow
             try
             {
                 using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7.1");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7.2");
                 using var response = await client.GetAsync(
                     "https://api.github.com/repos/luissimoes0106-lab/zeus-audio-control/releases?per_page=30", cancellation.Token);
                 response.EnsureSuccessStatusCode();

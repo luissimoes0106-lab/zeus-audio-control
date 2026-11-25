@@ -7,10 +7,10 @@ Unicode true
 !define APP_DIR "../dist/portable"
 !endif
 !ifndef OUTPUT
-!define OUTPUT "../dist/ZEUS-Audio-Control-Beta-0.7.1-Setup-x64.exe"
+!define OUTPUT "../dist/ZEUS-Audio-Control-Beta-0.7.2-Setup-x64.exe"
 !endif
 
-Name "ZEUS Audio Control Beta 0.7.1"
+Name "ZEUS Audio Control Beta 0.7.2"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\ZEUS Audio Control Beta 0.7"
 RequestExecutionLevel user
@@ -51,8 +51,8 @@ Section "ZEUS Audio Control"
   CreateShortCut "$SMPROGRAMS\ZEUS Audio Control.lnk" "$INSTDIR\ZeusAudioControl.exe" "" "$INSTDIR\ZeusAudioControl.exe" 0
   CreateShortCut "$DESKTOP\ZEUS Audio Control.lnk" "$INSTDIR\ZeusAudioControl.exe" "" "$INSTDIR\ZeusAudioControl.exe" 0
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "ZEUS Audio Control Beta 0.7.1"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "0.7.1-beta"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "ZEUS Audio Control Beta 0.7.2"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "0.7.2-beta"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\ZeusAudioControl.exe"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1

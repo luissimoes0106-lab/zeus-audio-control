@@ -72,7 +72,7 @@ internal sealed class AudioRoute(int outputBufferMilliseconds = 40)
         {
             processed = new TestGainProvider(before, (float)Math.Pow(10, studio.Gain / 20),
                 studio.Enabled, studio.HighPass, studio.Gate, studio.Threshold, studio.Compressor, studio.Presence, studio.Noise,
-                studio.Attack, studio.Hold, studio.Release, studio.CompressorThreshold, studio.Ratio, studio.Shield);
+                studio.Attack, studio.Hold, studio.Release, studio.CompressorThreshold, studio.Ratio, studio.Shield, studio.AutomaticGain);
         }
         if (kind == RouteKind.Headphones)
             processed = new RouteDynamics(new PreviewSource(before, processed, () => Volatile.Read(ref bypass) != 0), false, false, .12f);

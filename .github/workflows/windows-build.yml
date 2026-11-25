@@ -2,7 +2,7 @@ name: Windows build
 on:
   push:
     branches: [main, 'feature/**']
-    tags: ['v0.7.1-beta*']
+    tags: ['v0.7.2-beta*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -49,11 +49,11 @@ jobs:
           cp LICENSE dist/portable/
           cp -r licenses dist/portable/
           cd dist/portable
-          zip -qr ../ZEUS-Audio-Control-Beta-0.7.1-Portable-x64.zip ZeusAudioControl.exe LICENSE licenses
+          zip -qr ../ZEUS-Audio-Control-Beta-0.7.2-Portable-x64.zip ZeusAudioControl.exe LICENSE licenses
           cd ..
-          sha256sum ZEUS-Audio-Control-Beta-0.7.1-{Portable-x64.zip,Setup-x64.exe} > SHA256SUMS.txt
+          sha256sum ZEUS-Audio-Control-Beta-0.7.2-{Portable-x64.zip,Setup-x64.exe} > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
-          unzip -t ZEUS-Audio-Control-Beta-0.7.1-Portable-x64.zip
+          unzip -t ZEUS-Audio-Control-Beta-0.7.2-Portable-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ZeusAudioControl-win-x64
@@ -87,7 +87,7 @@ jobs:
             $previous.IconLocation = "$env:WINDIR\System32\notepad.exe,0"
             $previous.Save()
           }
-          $installer = Start-Process dist/ZEUS-Audio-Control-Beta-0.7.1-Setup-x64.exe -ArgumentList '/S' -Wait -PassThru
+          $installer = Start-Process dist/ZEUS-Audio-Control-Beta-0.7.2-Setup-x64.exe -ArgumentList '/S' -Wait -PassThru
           if ($installer.ExitCode -ne 0 -or !(Test-Path $app) -or !(Test-Path $shortcut)) {
             throw "Installation did not produce the executable and Start menu shortcut"
           }
@@ -99,7 +99,7 @@ jobs:
               throw "Shortcut target or icon is incorrect: $link"
             }
           }
-          Expand-Archive dist/ZEUS-Audio-Control-Beta-0.7.1-Portable-x64.zip -DestinationPath portable
+          Expand-Archive dist/ZEUS-Audio-Control-Beta-0.7.2-Portable-x64.zip -DestinationPath portable
           if ((Get-FileHash $app).Hash -ne (Get-FileHash portable/ZeusAudioControl.exe).Hash) {
             throw "Installed executable differs from the portable executable"
           }
@@ -123,7 +123,7 @@ jobs:
           }
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v0.7.1-beta')
+    if: startsWith(github.ref, 'refs/tags/v0.7.2-beta')
     needs: install-smoke
     runs-on: ubuntu-latest
     permissions:
@@ -142,5 +142,5 @@ jobs:
           if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --repo "$REPOSITORY" --clobber
           else
-            gh release create "$TAG" dist/* --repo "$REPOSITORY" --verify-tag --draft --prerelease --title 'ZEUS Audio Control Beta 0.7.1' --notes 'Windows 10/11 x64. The installer and portable executable are unsigned. Verify SHA256SUMS.txt before opening.'
+            gh release create "$TAG" dist/* --repo "$REPOSITORY" --verify-tag --draft --prerelease --title 'ZEUS Audio Control Beta 0.7.2' --notes 'Windows 10/11 x64. The installer and portable executable are unsigned. Verify SHA256SUMS.txt before opening.'
           fi
