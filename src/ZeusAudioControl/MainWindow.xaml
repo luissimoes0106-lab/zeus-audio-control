@@ -31,7 +31,7 @@
 <WrapPanel Margin="0,0,0,10"><Button Content="Studio" Tag="studio" Click="Preset_Click"/><Button Content="Discord" Tag="discord" Click="Preset_Click"/><Button Content="Gravação" Tag="record" Click="Preset_Click"/><Button Content="Salvar perfil" Click="SaveStudio_Click"/></WrapPanel><TextBlock Name="StudioStatus" TextWrapping="Wrap"/>
 <CheckBox Name="StudioEnabled" Content="Ativar efeitos Studio" Foreground="White" IsChecked="True" Margin="0,4"/>
 <CheckBox Name="HighPass" Content="Filtro de graves (80 Hz)" Foreground="White" IsChecked="True" Margin="0,4"/>
-<CheckBox Name="GateEnabled" Content="Noise Gate (reduz sons baixos)" Foreground="White" IsChecked="True" Margin="0,4"/>
+<TextBlock Text="Supressão de ruído adaptativa (experimental)" Margin="0,10,0,2"/><Slider Name="NoiseReduction" Minimum="0" Maximum="100" Value="0" TickFrequency="5"/><TextBlock Text="{Binding ElementName=NoiseReduction, Path=Value, StringFormat={}{0:0}%}"/><TextBlock Text="Atenua ruído de fundo baixo; não separa vozes simultâneas. Apenas no teste local." TextWrapping="Wrap" Foreground="#AFAFB5"/><CheckBox Name="GateEnabled" Content="Noise Gate (reduz sons baixos)" Foreground="White" IsChecked="True" Margin="0,4"/>
 <TextBlock Text="Limiar do gate (dBFS)"/><Slider Name="GateThreshold" Minimum="-65" Maximum="-20" Value="-45"/><TextBlock Text="{Binding ElementName=GateThreshold, Path=Value, StringFormat={}{0:0} dBFS}"/>
 <CheckBox Name="CompressorEnabled" Content="Compressor de voz" Foreground="White" IsChecked="True" Margin="0,4"/>
 <TextBlock Text="Presença da voz (dB)"/><Slider Name="Presence" Minimum="-6" Maximum="6" Value="2"/><TextBlock Text="{Binding ElementName=Presence, Path=Value, StringFormat={}{0:0} dB}"/>
