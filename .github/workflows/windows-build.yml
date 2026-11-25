@@ -14,8 +14,8 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
       - name: Run synthetic and persistence tests
@@ -24,20 +24,36 @@ jobs:
         run: dotnet build src/ZeusAudioControl -c Release -r win-x64
       - name: Publish portable executable
         run: dotnet publish src/ZeusAudioControl -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o dist/portable
-      - name: Build installer and archives
-        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-executable
+          path: dist/portable/ZeusAudioControl.exe
+          if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-executable
+          path: dist/portable
+      - name: Install NSIS from Ubuntu
         run: |
-          Compress-Archive -Path dist/portable/ZeusAudioControl.exe,LICENSE,licenses -DestinationPath dist/ZEUS-Audio-Control-Beta-0.4-Portable-x64.zip
-          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          if (!(Test-Path $nsis)) {
-            choco install nsis --yes --no-progress
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          & $nsis installer/ZeusAudioControl.nsi
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-ChildItem dist -File | ForEach-Object {
-            "$( (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() )  $( $_.Name )"
-          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
+          sudo apt-get update
+          sudo apt-get install -y nsis
+      - name: Build installer and portable ZIP
+        run: |
+          makensis installer/ZeusAudioControl.nsi
+          cp LICENSE dist/portable/
+          cp -r licenses dist/portable/
+          cd dist/portable
+          zip -qr ../ZEUS-Audio-Control-Beta-0.4-Portable-x64.zip ZeusAudioControl.exe LICENSE licenses
+          cd ..
+          sha256sum ZEUS-Audio-Control-Beta-0.4-{Portable-x64.zip,Setup-x64.exe} > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+          unzip -t ZEUS-Audio-Control-Beta-0.4-Portable-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ZeusAudioControl-win-x64
@@ -47,9 +63,40 @@ jobs:
             dist/SHA256SUMS.txt
           if-no-files-found: error
 
+  install-smoke:
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZeusAudioControl-win-x64
+          path: dist
+      - name: Install and uninstall for the current user
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:LOCALAPPDATA 'Programs\ZEUS Audio Control'
+          $app = Join-Path $install 'ZeusAudioControl.exe'
+          $uninstaller = Join-Path $install 'Uninstall.exe'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'ZEUS Audio Control.lnk'
+          $installer = Start-Process dist/ZEUS-Audio-Control-Beta-0.4-Setup-x64.exe -ArgumentList '/S' -Wait -PassThru
+          if ($installer.ExitCode -ne 0 -or !(Test-Path $app) -or !(Test-Path $shortcut)) {
+            throw "Installation did not produce the executable and Start menu shortcut"
+          }
+          Expand-Archive dist/ZEUS-Audio-Control-Beta-0.4-Portable-x64.zip -DestinationPath portable
+          if ((Get-FileHash $app).Hash -ne (Get-FileHash portable/ZeusAudioControl.exe).Hash) {
+            throw "Installed executable differs from the portable executable"
+          }
+          Start-Process $uninstaller -ArgumentList '/S' -Wait
+          for ($attempt = 0; $attempt -lt 20 -and (Test-Path $install); $attempt++) {
+            Start-Sleep -Milliseconds 500
+          }
+          if ((Test-Path $app) -or (Test-Path $shortcut)) {
+            throw "Uninstallation left the executable or Start menu shortcut"
+          }
+
   release:
     if: startsWith(github.ref, 'refs/tags/v0.4.0-beta')
-    needs: build
+    needs: install-smoke
     runs-on: ubuntu-latest
     permissions:
       contents: write

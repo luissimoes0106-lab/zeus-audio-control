@@ -36,6 +36,6 @@ dotnet build src/ZeusAudioControl -c Release -r win-x64
 dotnet run --project src/ZeusAudioControl
 ```
 
-O workflow **Windows build** gera o ZIP, o instalador NSIS e os hashes como artefatos. Tags `v0.4.0-beta*` preparam um pré-lançamento em rascunho no GitHub. Publique o rascunho no GitHub após validar os pacotes. Para o site de downloads, configure o GitHub Pages com origem GitHub Actions e execute o workflow **Download site** a partir de `main`.
+O workflow **Windows build** compila em Windows, gera o ZIP, o instalador NSIS e os hashes como artefatos, e verifica instalação e remoção em um runner Windows. Tags `v0.4.0-beta*` preparam um pré-lançamento em rascunho no GitHub. Publique o rascunho no GitHub após validar os pacotes. Para o site de downloads, configure o GitHub Pages com origem GitHub Actions e execute o workflow **Download site** a partir de `main`.
 
 Em Windows, valide os atalhos, a bandeja, instalação e remoção como usuário comum, troca de idioma, seleção de dispositivos, desconexão e reconexão de USB/Bluetooth, gravação e reprodução repetidas e estabilidade de CPU/memória. Verifique o balanceamento e o surround com os canais físicos.
