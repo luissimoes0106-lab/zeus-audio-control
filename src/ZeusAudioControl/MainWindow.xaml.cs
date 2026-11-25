@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         SetupTray();
+        LoadAliases();
         RefreshDevices();
         RestoreSelection();
         RestoreStudio();
@@ -109,6 +110,7 @@ public partial class MainWindow : Window
         finally { _updating = false; }
         SyncOutput();
         SyncInput();
+        ShowAliases();
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) { if (_testCapture is null) RefreshDevices(); }
@@ -118,6 +120,7 @@ public partial class MainWindow : Window
         if (_updating) return;
         _output = OutputDevices.SelectedItem as MMDevice;
         SyncOutput();
+        ShowAliases();
     }
 
     private void InputDevices_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -125,6 +128,7 @@ public partial class MainWindow : Window
         if (_updating) return;
         _input = InputDevices.SelectedItem as MMDevice;
         SyncInput();
+        ShowAliases();
     }
 
     private void SyncOutput()
@@ -362,6 +366,12 @@ public partial class MainWindow : Window
         try { System.IO.File.Delete(_testPath); } catch { }
     }
 
+
+    private Dictionary<string,string> _aliases = new();
+    private string AliasPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "aliases.json");
+    private void LoadAliases() { try { if(System.IO.File.Exists(AliasPath)) _aliases=System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,string>>(System.IO.File.ReadAllText(AliasPath)) ?? new(); } catch { } }
+    private void ShowAliases() { OutputAlias.Text=_output is null?"":_aliases.GetValueOrDefault(_output.ID,""); InputAlias.Text=_input is null?"":_aliases.GetValueOrDefault(_input.ID,""); }
+    private void Alias_Click(object sender,RoutedEventArgs e) { try { bool output=(sender as Button)?.Tag as string=="out"; var device=output?_output:_input; if(device is null)return; var alias=(output?OutputAlias.Text:InputAlias.Text).Trim(); if(alias.Length>80) { Footer.Text="Use até 80 caracteres.";return; } if(alias.Length==0)_aliases.Remove(device.ID);else _aliases[device.ID]=alias; System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(AliasPath)!); System.IO.File.WriteAllText(AliasPath,System.Text.Json.JsonSerializer.Serialize(_aliases)); Footer.Text=alias.Length==0?"Apelido removido.":$"Apelido salvo: {alias}"; }catch(Exception ex){Footer.Text=ex.Message;} }
     private void SaveLocal() { try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(StudioPath)!); System.IO.File.WriteAllText(StudioPath,System.Text.Json.JsonSerializer.Serialize(CurrentStudio())); System.IO.File.WriteAllText(_settingsPath,System.Text.Json.JsonSerializer.Serialize(new string?[]{_output?.ID,_input?.ID})); } catch { } }
     private void RestoreStartup() { try { using var k=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); AutoStart.IsChecked=k?.GetValue("ZeusAudioControl") is string; } catch { } }
     private void AutoStart_Click(object sender,RoutedEventArgs e) { try { using var k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if(AutoStart.IsChecked==true) k.SetValue("ZeusAudioControl","\""+Environment.ProcessPath+"\""); else k.DeleteValue("ZeusAudioControl",false); } catch(Exception ex){Footer.Text=ex.Message;RestoreStartup();} }
