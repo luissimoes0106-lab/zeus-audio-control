@@ -40,7 +40,7 @@ internal static class ProfileFile
 internal sealed record StudioProfile(double Gain, bool Enabled, bool HighPass, bool Gate,
     double Threshold, bool Compressor, double Presence, double Noise = 0,
     double Attack = 5, double Hold = 0, double Release = 150,
-    double CompressorThreshold = -18.06179974, double Ratio = 3);
+    double CompressorThreshold = -18.06179974, double Ratio = 3, bool Shield = false);
 
 internal sealed record ExportedProfile(int Version, StudioProfile Voice, double[]? Equalizer)
 {

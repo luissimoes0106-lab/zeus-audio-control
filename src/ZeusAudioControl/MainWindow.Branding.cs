@@ -1,3 +1,4 @@
+using System.IO;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -38,6 +39,12 @@ public partial class MainWindow
         var (window, body) = BrandWindow("ZEUS Quick Control");
         AddVolume(L("Saída", "Output"), VolumeSlider, MuteToggle);
         AddVolume(L("Microfone", "Microphone"), MicSlider, MicMute);
+        var routing = new Button { Content = L("Abrir rotas", "Open routes"), Margin = new Thickness(0, 10, 0, 0) };
+        routing.Click += (_, _) => { window.Close(); Navigate("Rotas"); };
+        var stop = new Button { Content = L("Parar todas as rotas", "Stop all routes"), IsEnabled = _routes.Count > 0 };
+        stop.Click += (_, _) => { foreach (var active in _routes.Values) active.Audio.Stop(); stop.IsEnabled = false; };
+        body.Children.Add(routing);
+        body.Children.Add(stop);
         window.ShowDialog();
 
         void AddVolume(string label, Slider source, CheckBox mute)
@@ -90,12 +97,79 @@ public partial class MainWindow
         var open = new Button { Content = L("Abrir GitHub Releases", "Open GitHub Releases"), Margin = new Thickness(0, 10, 0, 0) };
         open.Click += (_, _) => openReleases(new RoutedEventArgs(Button.ClickEvent));
         body.Children.Add(open);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        var download = new Button { IsEnabled = false, Content = L("Baixar e verificar instalador", "Download and verify installer") };
+        var recover = new Button { Content = L("Recuperar cópia anterior", "Recover previous copy") };
+        body.Children.Add(download);
+        body.Children.Add(recover);
+        string? releaseTag = null, installerName = null;
+        var updateRoot = Path.Combine(Path.GetDirectoryName(_settingsPath)!, "Updates");
+        var cancellation = new CancellationTokenSource();
+        download.Click += async (_, _) =>
+        {
+            if (releaseTag is null || installerName is null) return;
+            download.IsEnabled = false;
+            recover.IsEnabled = false;
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+                timeout.CancelAfter(TimeSpan.FromMinutes(4));
+                var token = timeout.Token;
+                var baseUrl = $"https://github.com/luissimoes0106-lab/zeus-audio-control/releases/download/{releaseTag}/";
+                using var client = new System.Net.Http.HttpClient();
+                using var checksum = await client.GetAsync(baseUrl + "SHA256SUMS.txt", System.Net.Http.HttpCompletionOption.ResponseHeadersRead, token);
+                checksum.EnsureSuccessStatusCode();
+                await using var checksumData = await checksum.Content.ReadAsStreamAsync(token);
+                var data = new byte[16385];
+                var length = await checksumData.ReadAtLeastAsync(data, data.Length, false, token);
+                if (length == data.Length) throw new InvalidDataException("Checksum manifest exceeds 16 KiB.");
+                var hash = UpdateFiles.HashFor(System.Text.Encoding.UTF8.GetString(data, 0, length), installerName);
+                var destination = Path.Combine(updateRoot, Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(destination);
+                status.Text = L("Baixando pacote e verificando SHA-256…", "Downloading and checking SHA-256…");
+                using var response = await client.GetAsync(baseUrl + installerName, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, token);
+                response.EnsureSuccessStatusCode();
+                await using var package = await response.Content.ReadAsStreamAsync(token);
+                await UpdateFiles.CopyVerified(package, Path.Combine(destination, installerName), hash, UpdateFiles.MaximumPackage, token);
+                PersistIfChanged();
+                status.Text = L("Criando backup do executável e dos perfis…", "Backing up the executable and profiles…");
+                var backup = Path.Combine(destination, "Backup");
+                await UpdateFiles.Backup(Environment.ProcessPath!, Path.GetDirectoryName(_settingsPath)!, backup, token);
+                status.Text = L("Instalador verificado. Feche o ZEUS antes de executá-lo.", "Installer verified. Close ZEUS before running it.");
+                Process.Start(new ProcessStartInfo(destination) { UseShellExecute = true });
+            }
+            catch (Exception error) when (error is not OutOfMemoryException)
+            {
+                if (!cancellation.IsCancellationRequested) status.Text = error.Message;
+            }
+            finally { download.IsEnabled = recover.IsEnabled = true; }
+        };
+        recover.Click += async (_, _) =>
+        {
+            var picker = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = L("Selecione a pasta Backup", "Select the Backup folder"),
+                InitialDirectory = Directory.Exists(updateRoot) ? updateRoot : ""
+            };
+            if (picker.ShowDialog(window) != true) return;
+            download.IsEnabled = recover.IsEnabled = false;
+            try
+            {
+                var destination = Path.Combine(updateRoot, "Recovered-" + Guid.NewGuid().ToString("N"));
+                await Task.Run(() => UpdateFiles.Recover(picker.FolderName, destination, cancellation.Token), cancellation.Token);
+                status.Text = L("Cópia verificada recuperada em pasta separada.", "Verified copy recovered to a separate folder.");
+                Process.Start(new ProcessStartInfo(destination) { UseShellExecute = true });
+            }
+            catch (Exception error) when (error is not OutOfMemoryException)
+            {
+                if (!cancellation.IsCancellationRequested) status.Text = error.Message;
+            }
+            finally { download.IsEnabled = releaseTag is not null; recover.IsEnabled = true; }
+        };
         window.Loaded += async (_, _) =>
         {
             try
             {
-                using var client = new System.Net.Http.HttpClient();
+                using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(12) };
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("ZEUS-Audio-Control/0.7");
                 using var response = await client.GetAsync(
                     "https://api.github.com/repos/luissimoes0106-lab/zeus-audio-control/releases?per_page=30", cancellation.Token);
@@ -113,11 +187,18 @@ public partial class MainWindow
                     .ToArray();
                 var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(0, 7, 0, 0);
                 var newer = versions.FirstOrDefault(item => IsNewerRelease(item.Tag, Version.Parse(item.Match.Groups[1].Value), current));
+                if (newer.Tag is not null)
+                {
+                    var version = Version.Parse(newer.Match.Groups[1].Value);
+                    releaseTag = newer.Tag;
+                    installerName = $"ZEUS-Audio-Control-Beta-{version.Major}.{version.Minor}-Setup-x64.exe";
+                    download.IsEnabled = true;
+                }
                 status.Text = newer.Tag is not null
                     ? L($"Versão disponível: {newer.Tag}", $"Available version: {newer.Tag}")
                     : L("Nenhuma versão pública mais recente encontrada.", "No newer public version found.");
             }
-            catch (Exception error) when (error is System.Net.Http.HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+            catch (Exception error) when (error is System.Net.Http.HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException)
             {
                 status.Text = L("Não foi possível consultar o GitHub. Tente novamente com acesso à internet.",
                     "Could not check GitHub. Try again with an internet connection.");

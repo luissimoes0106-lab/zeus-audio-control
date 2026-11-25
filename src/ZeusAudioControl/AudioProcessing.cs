@@ -71,10 +71,10 @@ internal sealed class TestGainProvider : ISampleProvider
     private readonly bool highPass;
     private readonly float[] envelope, gateGain;
     private int channel;
-    private readonly float noiseStrength, noiseLearn, noiseSmooth;
+    private readonly float noiseStrength, noiseLearn, noiseSmooth, noiseCeiling;
     private readonly float[] noiseFloor, noiseGain;
     public TestGainProvider(ISampleProvider source, float gain, bool studio, bool highPass, bool gate, double thresholdDb, bool compressor, double presence, double noise,
-        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3)
+        double attackMs = 5, double holdMs = 0, double releaseMs = 150, double compressorDb = -18.06179974, double ratio = 3, bool shield = false)
     {
         this.source = source; this.gain = gain; this.studio = studio; this.highPass = highPass; this.gate = gate; this.compressor = compressor;
         threshold = (float)Math.Pow(10, thresholdDb / 20);
@@ -89,7 +89,8 @@ internal sealed class TestGainProvider : ISampleProvider
         envelope = new float[channels]; gateGain = new float[channels];
         noiseLearn = (float)(1 - Math.Exp(-1.0 / (rate * .18)));
         noiseSmooth = (float)(1 - Math.Exp(-1.0 / (rate * .006)));
-        noiseStrength = (float)Math.Clamp(noise / 100, 0, 1);
+        noiseStrength = (float)Math.Clamp(Math.Max(shield ? 75 : 0, noise) / 100, 0, 1);
+        noiseCeiling = shield ? .04f : .025f;
         noiseFloor = new float[channels]; noiseGain = new float[channels];
         Array.Fill(noiseFloor, .001f); Array.Fill(noiseGain, 1f); Array.Fill(gateGain, 1f);
         for (int i = 0; i < channels; i++) {
@@ -113,8 +114,8 @@ internal sealed class TestGainProvider : ISampleProvider
                     float env = envelope[channel];
                     float floor = noiseFloor[channel];
                     // Learn quiet stationary background, and freeze during louder speech.
-                    if (env < .025f) floor += noiseLearn * (env - floor);
-                    noiseFloor[channel] = Math.Clamp(floor, .0001f, .025f);
+                    if (env < noiseCeiling) floor += noiseLearn * (env - floor);
+                    noiseFloor[channel] = Math.Clamp(floor, .0001f, noiseCeiling);
                     float ratio = Math.Clamp((env - noiseFloor[channel]) / Math.Max(env, .0001f), 0, 1);
                     float targetNoise = 1 - noiseStrength * (1 - ratio * ratio);
                     noiseGain[channel] += noiseSmooth * (targetNoise - noiseGain[channel]);
@@ -220,6 +221,7 @@ internal sealed class RouteDynamics(ISampleProvider source, bool compressor, boo
 {
     private float peak;
     private float power;
+    private float volumeGain = 1;
     private readonly float peakRelease = (float)Math.Exp(-1.0 / (source.WaveFormat.SampleRate * source.WaveFormat.Channels * .12));
     private readonly float smoothing = (float)(1 - Math.Exp(-1.0 / (source.WaveFormat.SampleRate * source.WaveFormat.Channels * .5)));
 
@@ -232,8 +234,13 @@ internal sealed class RouteDynamics(ISampleProvider source, bool compressor, boo
         {
             var sample = float.IsFinite(buffer[i]) ? buffer[i] : 0;
             if (compressor) peak = Math.Max(Math.Abs(sample), peak * peakRelease);
-            if (normalize) power += smoothing * (sample * sample - power);
-            var gain = normalize ? Math.Clamp(.14f / MathF.Sqrt(Math.Max(.0001f, power)), .25f, 2f) : 1f;
+            if (normalize)
+            {
+                power += smoothing * (sample * sample - power);
+                var target = power < .000004f ? 1f : Math.Clamp(.14f / MathF.Sqrt(power), .25f, 2f);
+                volumeGain += smoothing * 4 * (target - volumeGain);
+            }
+            var gain = volumeGain;
             if (compressor && peak * gain > .22f)
                 gain *= MathF.Pow(.22f / (peak * gain), .75f);
             buffer[i] = Math.Clamp(sample * gain, -cap, cap);

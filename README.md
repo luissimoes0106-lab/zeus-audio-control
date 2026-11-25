@@ -29,3 +29,5 @@ dotnet run --project src/ZeusAudioControl
 O GitHub Actions testa e compila em Windows, gera instalador/ZIP/hashes, valida a interface em tamanhos diferentes e testa instalação e remoção no runner Windows. Tags `v0.7.0-beta*` preparam um pré-lançamento em rascunho.
 
 **Sobre o ZEUS** abre a verificação de versões públicas no GitHub quando solicitada. O download e a execução do instalador são manuais. Os controles de áudio continuam disponíveis offline.
+
+Consulte a [matriz operacional da Beta 0.7](docs/BETA-0.7-OPERACIONAL.md) para usar rotas simultâneas, Smart Volume, Voice Shield e recuperação de atualizações.

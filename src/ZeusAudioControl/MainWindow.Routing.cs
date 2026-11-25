@@ -10,13 +10,17 @@ namespace ZeusAudioControl;
 
 public partial class MainWindow
 {
-    private AudioRoute? _route;
-    private RouteKind _routeKind;
-    private bool _routeRunning;
-    private StudioProfile? _runningVoice;
-    private bool _runningCompressor, _runningNormalizer;
+    private sealed record ActiveRoute(AudioRoute Audio, RouteEndpoints Endpoints, StudioProfile Studio, bool Compressor, bool SmartVolume)
+    {
+        public bool Running { get; set; }
+    }
+
+    private readonly Dictionary<RouteKind, ActiveRoute> _routes = new();
+    private RouteKind SelectedRouteKind => (RouteKind)Math.Max(0, RouteMode.SelectedIndex);
+    private ActiveRoute? SelectedRoute => _routes.GetValueOrDefault(SelectedRouteKind);
     private static readonly PropertyKey EndpointContainer = new(new Guid("8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c"), 2);
-    private string? _routeInputId, _routeOutputId;
+    private static readonly float[] SpectrumWindow = Enumerable.Range(0, 2048)
+        .Select(i => (float)FastFourierTransform.HannWindow(i, 2048)).ToArray();
     private readonly float[] _drySamples = new float[2048];
     private readonly float[] _wetSamples = new float[2048];
     private readonly Complex[] _spectrum = new Complex[2048];
@@ -34,7 +38,9 @@ public partial class MainWindow
         ("RouteSource", "Entrada da rota", "Route input"),
         ("RouteDestination", "Saída da rota", "Route output"),
         ("OutputCompressor", "Compressor de saída", "Output compressor"),
-        ("Normalize", "Normalizar nível da saída", "Normalize output level"),
+        ("Normalize", "Smart Volume", "Smart Volume"),
+        ("LowLatency", "Baixa latência (experimental)", "Low latency (experimental)"),
+        ("VoiceShield", "Voice Shield · reforço adaptativo de voz", "Voice Shield · adaptive voice protection"),
         ("StartRoute", "Iniciar rota", "Start route"),
         ("MeterTitle", "Forma de onda · original em cinza, saída em vermelho", "Waveform · original in gray, output in red"),
         ("SpectrumTitle", "Espectro da saída · primeiro canal", "Output spectrum · first channel"),
@@ -51,6 +57,19 @@ public partial class MainWindow
     private void RouteMode_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (RouteConfirm is null) return;
+        if (SelectedRoute is { } active)
+        {
+            RouteInput.SelectedItem = FindChoice(RouteInput, active.Endpoints.Input, false);
+            RouteOutput.SelectedItem = FindChoice(RouteOutput, active.Endpoints.Output, false);
+            RouteLowLatency.IsChecked = active.Audio.OutputBufferMilliseconds == 25;
+            RouteNormalizer.IsChecked = active.SmartVolume;
+            RouteCompressor.IsChecked = active.Compressor;
+        }
+        else
+        {
+            RouteInput.SelectedItem = null;
+            RouteOutput.SelectedItem = null;
+        }
         RouteConfirm.IsChecked = false;
         UpdateRouteLabels();
     }
@@ -73,7 +92,14 @@ public partial class MainWindow
         RouteConfirm.Content = kind == RouteKind.Headphones
             ? L("Confirmei que a saída selecionada é um fone de ouvido.", "I verified that the selected output is headphones.")
             : L("Confirmei os endpoints e que a rota não fecha um ciclo de áudio.", "I verified the endpoints and that the route does not form an audio loop.");
-        if (_route is null) RouteStatus.Text = L("Rota inativa", "Route inactive");
+        var selected = SelectedRoute;
+        SetRouteControls(selected is not null);
+        RouteStatus.Text = selected is null ? L("Rota inativa", "Route inactive")
+            : selected.Running ? L("Rota ativa", "Route active") : L("Abrindo endpoints…", "Opening endpoints…");
+        RouteMetrics.Text = SaturationStatus.Text = "";
+        DryWave.Points = new PointCollection();
+        WetWave.Points = new PointCollection();
+        SpectrumLine.Points = new PointCollection();
         UpdateDashboard();
     }
 
@@ -83,13 +109,15 @@ public partial class MainWindow
         RouteOutput.ItemsSource = outputs.Select(Choice).ToArray();
         RouteInput.SelectedItem = FindChoice(RouteInput, inputId, fallback: false);
         RouteOutput.SelectedItem = FindChoice(RouteOutput, outputId, fallback: false);
-        if (_route is not null && (Selected(RouteInput)?.ID != _routeInputId || Selected(RouteOutput)?.ID != _routeOutputId))
-            _route.Stop();
+        foreach (var active in _routes.Values)
+            if (!inputs.Any(device => device.ID == active.Endpoints.Input) ||
+                !outputs.Any(device => device.ID == active.Endpoints.Output))
+                active.Audio.Stop();
     }
 
     private async void StartRoute_Click(object sender, RoutedEventArgs e)
     {
-        if (_route is not null) return;
+        if (SelectedRoute is not null) return;
         var input = Selected(RouteInput);
         var output = Selected(RouteOutput);
         if (input is null || output is null || RouteConfirm.IsChecked != true)
@@ -111,18 +139,6 @@ public partial class MainWindow
                     return;
                 }
             }
-            else
-            {
-                var inputContainer = ReadEndpointProperty(input, EndpointContainer);
-                var outputContainer = ReadEndpointProperty(output, EndpointContainer);
-                if (Guid.TryParse(inputContainer?.ToString(), out var id) && id != Guid.Empty &&
-                    Guid.TryParse(outputContainer?.ToString(), out var other) && id == other)
-                {
-                    RouteStatus.Text = L("Os endpoints pertencem ao mesmo dispositivo. Use um dispositivo físico e um cabo virtual distintos.",
-                        "Both endpoints belong to the same device. Use separate physical and virtual devices.");
-                    return;
-                }
-            }
         }
         catch (Exception error)
         {
@@ -130,51 +146,66 @@ public partial class MainWindow
             return;
         }
 
-        var route = _route = new AudioRoute();
-        _routeKind = kind;
-        _runningCompressor = RouteCompressor.IsChecked == true;
-        _runningNormalizer = RouteNormalizer.IsChecked == true;
-        var studio = CurrentStudio();
-        _runningVoice = kind == RouteKind.Playback ? null : studio;
-        _routeInputId = input.ID;
-        _routeOutputId = output.ID;
+        var endpoints = new RouteEndpoints(kind, input.ID, output.ID, ContainerId(input), ContainerId(output));
+        if (!RouteSafety.CanStart(endpoints, _routes.Values.Select(active => active.Endpoints)))
+        {
+            RouteStatus.Text = L("Rota bloqueada: endpoints duplicados, cabo compartilhado ou topologia desconhecida.",
+                "Route blocked: duplicate endpoints, shared cable, or unknown topology.");
+            return;
+        }
+
+        var route = new AudioRoute(RouteLowLatency.IsChecked == true ? 25 : 40);
+        var active = new ActiveRoute(route, endpoints, CurrentStudio(), RouteCompressor.IsChecked == true,
+            RouteNormalizer.IsChecked == true);
+        _routes.Add(kind, active);
         SetRouteControls(true);
         RouteStatus.Text = L("Abrindo endpoints…", "Opening endpoints…");
         route.SetBypass(MonitorOriginal.IsChecked == true);
         try
         {
-            await route.Run(_routeInputId, _routeOutputId, _routeKind, EqFrequencies, PlaybackGains(),
-                BassBoost.Value, studio, _runningCompressor, _runningNormalizer,
+            await route.Run(endpoints.Input, endpoints.Output, kind, EqFrequencies, PlaybackGains(),
+                BassBoost.Value, active.Studio, active.Compressor, active.SmartVolume,
                 () => Dispatcher.BeginInvoke(() =>
                 {
-                    if (_closing || _route != route) return;
-                    _routeRunning = true;
-                    RouteStatus.Text = L("Rota ativa", "Route active");
+                    if (_closing || !_routes.TryGetValue(kind, out var current) || current != active) return;
+                    active.Running = true;
+                    if (SelectedRouteKind == kind) RouteStatus.Text = L("Rota ativa", "Route active");
                     UpdatePlaybackEq();
                     UpdateDashboard();
                 }));
-            if (!_closing) RouteStatus.Text = L("Rota encerrada. Confira os endpoints antes de reiniciar.", "Route stopped. Check the endpoints before restarting.");
+            if (!_closing && SelectedRouteKind == kind)
+                RouteStatus.Text = L("Rota encerrada.", "Route stopped.");
         }
         catch (Exception error)
         {
-            if (!_closing) RouteStatus.Text = L("A rota parou: ", "The route stopped: ") + error.Message;
+            if (!_closing)
+            {
+                var message = L("A rota parou: ", "The route stopped: ") + error.Message;
+                Footer.Text = message;
+                if (SelectedRouteKind == kind) RouteStatus.Text = message;
+            }
         }
         finally
         {
-            _route = null;
-            _routeRunning = false;
+            _routes.Remove(kind);
             if (!_closing)
             {
-                SetRouteControls(false);
-                RouteConfirm.IsChecked = false;
+                if (SelectedRouteKind == kind)
+                {
+                    SetRouteControls(false);
+                    RouteConfirm.IsChecked = false;
+                    RouteMetrics.Text = SaturationStatus.Text = "";
+                    DryWave.Points = new PointCollection();
+                    WetWave.Points = new PointCollection();
+                    SpectrumLine.Points = new PointCollection();
+                }
                 UpdateDashboard();
-                RouteMetrics.Text = SaturationStatus.Text = "";
-                DryWave.Points.Clear();
-                WetWave.Points.Clear();
-                SpectrumLine.Points.Clear();
             }
         }
     }
+
+    private static Guid? ContainerId(MMDevice endpoint) =>
+        Guid.TryParse(ReadEndpointProperty(endpoint, EndpointContainer)?.ToString(), out var id) && id != Guid.Empty ? id : null;
 
     private static object? ReadEndpointProperty(MMDevice device, PropertyKey key)
     {
@@ -187,15 +218,15 @@ public partial class MainWindow
 
     private void SetRouteControls(bool active)
     {
-        RouteMode.IsEnabled = RouteInput.IsEnabled = RouteOutput.IsEnabled = RouteConfirm.IsEnabled =
+        RouteInput.IsEnabled = RouteOutput.IsEnabled = RouteConfirm.IsEnabled = RouteLowLatency.IsEnabled =
             RouteCompressor.IsEnabled = RouteNormalizer.IsEnabled = RouteStart.IsEnabled = !active;
         RouteStop.IsEnabled = active;
     }
 
-    private void StopRoute_Click(object sender, RoutedEventArgs e) => _route?.Stop();
+    private void StopRoute_Click(object sender, RoutedEventArgs e) => SelectedRoute?.Audio.Stop();
     private void MonitorOriginal_Click(object sender, RoutedEventArgs e)
     {
-        _route?.SetBypass(MonitorOriginal.IsChecked == true);
+        _routes.GetValueOrDefault(RouteKind.Headphones)?.Audio.SetBypass(MonitorOriginal.IsChecked == true);
         UpdateDashboard();
     }
 
@@ -208,25 +239,27 @@ public partial class MainWindow
             "game" => "Gaming", "music" => L("Música", "Music"), "movie" => L("Filmes", "Movies"),
             "flat" => "Flat", _ => L("Personalizado", "Custom")
         };
-        var voice = _voiceProfile switch
+        var voiceLabel = _voiceProfile switch
         {
             "gaming" => "Gaming", "communication" => L("Comunicação", "Communication"),
             "studio" => "Studio", "record" => L("Gravação", "Recording"), _ => L("Personalizado", "Custom")
         };
-        OverviewProfile.Text = $"EQ · {eq}     /     {L("Voz", "Voice")} · {voice}";
+        OverviewProfile.Text = $"EQ · {eq}     /     {L("Voz", "Voice")} · {voiceLabel}";
         string effects;
-        if (_routeRunning && _routeKind == RouteKind.Playback)
+        var playback = _routes.GetValueOrDefault(RouteKind.Playback);
+        var voice = _routes.GetValueOrDefault(RouteKind.Microphone) ?? _routes.GetValueOrDefault(RouteKind.Headphones);
+        if (playback is { Running: true })
         {
             effects = string.Join(" · ", new[]
             {
-                "EQ", _runningCompressor ? "Compressor" : "",
-                _runningNormalizer ? L("Normalizador", "Normalizer") : "",
+                "EQ", playback.Compressor ? "Compressor" : "",
+                playback.SmartVolume ? "Smart Volume" : "",
                 L("Limitador", "Limiter")
             }.Where(label => label.Length > 0));
         }
         else
         {
-            var studio = _routeRunning && _runningVoice is not null ? _runningVoice : CurrentStudio();
+            var studio = voice is { Running: true } ? voice.Studio : CurrentStudio();
             effects = studio.Enabled
                 ? string.Join(" · ", new[]
                 {
@@ -237,17 +270,26 @@ public partial class MainWindow
                 }.Where(label => label.Length > 0))
                 : L("Ganho e limitador · Studio desligado", "Gain and limiter · Studio off");
         }
-        var scope = !_routeRunning || _routeKind == RouteKind.Headphones
-            ? L("Processamento local", "Local processing")
-            : L("Processamento entre aplicativos por rota", "Inter-app processing via route");
-        if (_routeRunning && _routeKind == RouteKind.Headphones && MonitorOriginal.IsChecked == true)
-            effects = L("Original com limite de monitoramento", "Original with monitor level cap");
+        var activeCount = _routes.Values.Count(route => route.Running);
+        var scope = activeCount == 0 ? L("Processamento local", "Local processing")
+            : L($"Rotas ativas: {activeCount}", $"Active routes: {activeCount}");
+        if (voice is { Running: true })
+        {
+            if (voice.Endpoints.Kind == RouteKind.Headphones && MonitorOriginal.IsChecked == true)
+                effects = L("Original com limite de monitoramento", "Original with monitor level cap");
+            else if (voice.Studio.Shield && voice.Studio.Enabled)
+                effects += " · Voice Shield";
+        }
         OverviewFilters.Text = $"{scope} · {effects}";
     }
 
     private void PollRoute()
     {
-        if (!_routeRunning || _page != "Rotas" || !IsVisible || _route is not { } route) return;
+        var selected = SelectedRoute;
+        var visible = _page == "Rotas" && IsVisible;
+        foreach (var active in _routes.Values) active.Audio.SetTelemetry(visible && active == selected);
+        if (!visible || selected is not { Running: true }) return;
+        var route = selected.Audio;
         var before = Volatile.Read(ref route.Before);
         var after = Volatile.Read(ref route.After);
         var buffer = Volatile.Read(ref route.Buffer);
@@ -258,13 +300,15 @@ public partial class MainWindow
             ? L("Entrada próxima da saturação", "Input near clipping")
             : $"{L("Pico de entrada", "Input peak")} · {20 * Math.Log10(Math.Max(inputPeak, .000001f)):0.0} dBFS";
         RouteMetrics.Text = L(
-            $"Fila {buffer.BufferedMilliseconds:0} ms · captura WASAPI {route.CaptureLatencyMilliseconds:0} ms · saída solicitada {AudioRoute.OutputBufferMilliseconds} ms · faltas {buffer.Underflows} · descartes {buffer.Overflows} · descontinuidades {Interlocked.Read(ref route.Discontinuities)}",
-            $"Queue {buffer.BufferedMilliseconds:0} ms · WASAPI capture {route.CaptureLatencyMilliseconds:0} ms · requested output {AudioRoute.OutputBufferMilliseconds} ms · underruns {buffer.Underflows} · drops {buffer.Overflows} · discontinuities {Interlocked.Read(ref route.Discontinuities)}");
+            $"Fila {buffer.BufferedMilliseconds:0} ms · captura WASAPI {route.CaptureLatencyMilliseconds:0} ms · saída solicitada {route.OutputBufferMilliseconds} ms · faltas {buffer.Underflows} · descartes {buffer.Overflows} · descontinuidades {Interlocked.Read(ref route.Discontinuities)}",
+            $"Queue {buffer.BufferedMilliseconds:0} ms · WASAPI capture {route.CaptureLatencyMilliseconds:0} ms · requested output {route.OutputBufferMilliseconds} ms · underruns {buffer.Underflows} · drops {buffer.Overflows} · discontinuities {Interlocked.Read(ref route.Discontinuities)}");
+        if (route.OutputBufferMilliseconds == 25 && (buffer.Underflows > 3 || buffer.Overflows > 3))
+            RouteMetrics.Text += L(" · Se as interrupções persistirem, use o modo padrão.", " · Use standard mode if interruptions persist.");
         DryWave.Points = WavePoints(_drySamples, RouteWave.ActualWidth, RouteWave.ActualHeight);
         WetWave.Points = WavePoints(_wetSamples, RouteWave.ActualWidth, RouteWave.ActualHeight);
         for (var i = 0; i < _spectrum.Length; i++)
         {
-            _spectrum[i].X = (float)(_wetSamples[i] * FastFourierTransform.HannWindow(i, _spectrum.Length));
+            _spectrum[i].X = _wetSamples[i] * SpectrumWindow[i];
             _spectrum[i].Y = 0;
         }
         FastFourierTransform.FFT(true, 11, _spectrum);

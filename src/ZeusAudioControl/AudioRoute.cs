@@ -5,9 +5,7 @@ using NAudio.Wave.SampleProviders;
 
 namespace ZeusAudioControl;
 
-internal enum RouteKind { Playback, Microphone, Headphones }
-
-internal sealed class AudioRoute
+internal sealed class AudioRoute(int outputBufferMilliseconds = 40)
 {
     private readonly CancellationTokenSource stop = new();
     private int bypass;
@@ -17,7 +15,9 @@ internal sealed class AudioRoute
     internal LocalEq? Eq;
     internal long Discontinuities;
     internal double CaptureLatencyMilliseconds;
-    internal const int OutputBufferMilliseconds = 40;
+    internal int OutputBufferMilliseconds { get; } = outputBufferMilliseconds;
+    private int telemetry;
+    public void SetTelemetry(bool enabled) => Volatile.Write(ref telemetry, enabled ? 1 : 0);
 
     public Task Run(string inputId, string outputId, RouteKind kind, double[] frequencies, double[] gains, double bass,
         StudioProfile studio, bool compressor, bool normalize, Action onStarted)
@@ -54,9 +54,9 @@ internal sealed class AudioRoute
         CaptureLatencyMilliseconds = client.StreamLatency / 10000.0;
         var capture = client.AudioCaptureClient;
         var bytes = new byte[checked(client.BufferSize * mix.BlockAlign)];
-        var buffer = new RouteBuffer(format, 100);
+        var buffer = new RouteBuffer(format, OutputBufferMilliseconds == 25 ? 65 : 100);
         Volatile.Write(ref Buffer, buffer);
-        var before = new AudioTap(buffer.ToSampleProvider());
+        var before = new AudioTap(buffer.ToSampleProvider(), () => Volatile.Read(ref telemetry) != 0);
         Volatile.Write(ref Before, before);
         ISampleProvider processed;
         if (kind == RouteKind.Playback)
@@ -69,11 +69,11 @@ internal sealed class AudioRoute
         {
             processed = new TestGainProvider(before, (float)Math.Pow(10, studio.Gain / 20),
                 studio.Enabled, studio.HighPass, studio.Gate, studio.Threshold, studio.Compressor, studio.Presence, studio.Noise,
-                studio.Attack, studio.Hold, studio.Release, studio.CompressorThreshold, studio.Ratio);
+                studio.Attack, studio.Hold, studio.Release, studio.CompressorThreshold, studio.Ratio, studio.Shield);
         }
         if (kind == RouteKind.Headphones)
             processed = new RouteDynamics(new PreviewSource(before, processed, () => Volatile.Read(ref bypass) != 0), false, false, .12f);
-        var after = new AudioTap(processed);
+        var after = new AudioTap(processed, () => Volatile.Read(ref telemetry) != 0);
         Volatile.Write(ref After, after);
         Exception? playbackError = null;
         using var player = new WasapiOut(output, AudioClientShareMode.Shared, true, OutputBufferMilliseconds);
@@ -89,7 +89,7 @@ internal sealed class AudioRoute
         {
             WaitHandle[] events = [stop.Token.WaitHandle, failed, wake];
             var prefill = System.Diagnostics.Stopwatch.StartNew();
-            while (buffer.BufferedMilliseconds < 25 && prefill.ElapsedMilliseconds < 750)
+            while (buffer.BufferedMilliseconds < (OutputBufferMilliseconds == 25 ? 15 : 25) && prefill.ElapsedMilliseconds < 750)
             {
                 if (WaitHandle.WaitAny(events, 25) == 0) return;
                 DrainCapture();
@@ -149,7 +149,7 @@ internal sealed class AudioRoute
     }
 }
 
-internal sealed class AudioTap(ISampleProvider source) : ISampleProvider
+internal sealed class AudioTap(ISampleProvider source, Func<bool> telemetry) : ISampleProvider
 {
     private const int Size = 2048;
     private readonly float[] history = new float[Size];
@@ -163,6 +163,7 @@ internal sealed class AudioTap(ISampleProvider source) : ISampleProvider
     {
         var read = source.Read(buffer, offset, count);
         if (Mirror is { } mirror) Array.Copy(buffer, offset, mirror, 0, read);
+        if (!telemetry()) return read;
         var currentPeak = 0f;
         lock (gate)
         {

@@ -69,7 +69,7 @@ public partial class MainWindow : Window
             SystemEvents.SessionEnding -= OnSessionEnding;
             _closing = true;
             _timer.Stop();
-            _route?.Stop();
+            foreach (var active in _routes.Values) active.Audio.Stop();
             PersistIfChanged();
             _tray?.ContextMenuStrip?.Dispose();
             _tray?.Dispose();
@@ -352,7 +352,7 @@ public partial class MainWindow : Window
         MainScroll.ScrollToTop();
     }
     private string StudioPath => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(_settingsPath)!, "studio.json");
-    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value);
+    private StudioProfile CurrentStudio() => new(TestGain.Value, StudioEnabled.IsChecked == true, HighPass.IsChecked == true, GateEnabled.IsChecked == true, GateThreshold.Value, CompressorEnabled.IsChecked == true, Presence.Value, NoiseReduction.Value, GateAttack.Value, GateHold.Value, GateRelease.Value, CompressorThreshold.Value, CompressorRatio.Value, VoiceShield.IsChecked == true);
     private bool _applyingStudio;
     private void ApplyStudio(StudioProfile p)
     {
@@ -372,6 +372,7 @@ public partial class MainWindow : Window
             GateRelease.Value = Math.Clamp(p.Release, 10, 1000);
             CompressorThreshold.Value = Math.Clamp(p.CompressorThreshold, -48, -3);
             CompressorRatio.Value = Math.Clamp(p.Ratio, 1, 12);
+            VoiceShield.IsChecked = p.Shield;
         }
         finally { _applyingStudio = false; }
     }
@@ -600,7 +601,7 @@ public partial class MainWindow : Window
                 _testPlayer.Init(new NAudio.Wave.SampleProviders.SampleToWaveProvider(new TestGainProvider(_testReader,
                     (float)Math.Pow(10, profile.Gain / 20), profile.Enabled, profile.HighPass, profile.Gate, profile.Threshold,
                     profile.Compressor, profile.Presence, profile.Noise, profile.Attack, profile.Hold, profile.Release,
-                    profile.CompressorThreshold, profile.Ratio)));
+                    profile.CompressorThreshold, profile.Ratio, profile.Shield)));
             }
             var player = _testPlayer;
             player.PlaybackStopped += (_, args) => Dispatcher.BeginInvoke(() =>
@@ -856,7 +857,7 @@ public partial class MainWindow : Window
 
     private void UpdatePlaybackEq()
     {
-        var routeEq = _route is { } route ? Volatile.Read(ref route.Eq) : null;
+        var routeEq = _routes.GetValueOrDefault(RouteKind.Playback) is { } active ? Volatile.Read(ref active.Audio.Eq) : null;
         if (_playbackEq is null && routeEq is null) return;
         var gains = PlaybackGains();
         _playbackEq?.SetGains(gains, BassBoost.Value);

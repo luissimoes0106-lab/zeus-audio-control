@@ -3,6 +3,54 @@ using ZeusAudioControl;
 
 var tests = new (string, Action)[]
 {
+    ("Simultaneous routing requires distinct cable containers and rejects unknown topology", () =>
+    {
+        var cable = Guid.NewGuid();
+        var headset = Guid.NewGuid();
+        var playback = new RouteEndpoints(RouteKind.Playback, "in-a", "speakers", cable, headset);
+        var voice = new RouteEndpoints(RouteKind.Microphone, "microphone", "out-b", headset, Guid.NewGuid());
+        Check(RouteSafety.CanStart(voice, [playback]));
+        Check(!RouteSafety.CanStart(voice with { OutputDevice = cable }, [playback]));
+        Check(!RouteSafety.CanStart(voice with { OutputDevice = null }, [playback]));
+        Check(!RouteSafety.CanStart(playback, [playback]));
+        Check(!RouteSafety.CanStart(voice with { Kind = RouteKind.Headphones }, [playback]));
+    }),
+    ("Updates verify bytes, reject tampering and recover a previous copy", () =>
+    {
+        var root = Directory.CreateTempSubdirectory("zeus-updater-").FullName;
+        try
+        {
+            var exe = Path.Combine(root, "app.exe");
+            File.WriteAllBytes(exe, [1, 2, 3]);
+            var backup = Path.Combine(root, "Backup");
+            var restored = Path.Combine(root, "Recovered");
+            UpdateFiles.Backup(exe, root, backup, default).GetAwaiter().GetResult();
+            UpdateFiles.Recover(backup, restored, default).GetAwaiter().GetResult();
+            Check(File.ReadAllBytes(Path.Combine(restored, "ZeusAudioControl.exe")).SequenceEqual(new byte[] { 1, 2, 3 }));
+            File.WriteAllBytes(Path.Combine(backup, "ZeusAudioControl.exe"), [9, 2, 3]);
+            var rejected = Path.Combine(root, "Rejected");
+            try { UpdateFiles.Recover(backup, rejected, default).GetAwaiter().GetResult(); }
+            catch (InvalidDataException)
+            {
+                Check(!Directory.Exists(rejected) && !Directory.Exists(rejected + ".partial"));
+                return;
+            }
+            throw new Exception("Tampered backup accepted.");
+        }
+        finally { Directory.Delete(root, true); }
+    }),
+    ("Voice Shield attenuates steady noise without a separate signal chain", () =>
+    {
+        float Tail(bool shield)
+        {
+            var input = new Signal(1, i => .018f * MathF.Sin(i * 2 * MathF.PI * 150 / 48000));
+            var voice = new TestGainProvider(input, 1, true, false, false, -45, false, 0, 0, shield: shield);
+            var data = new float[48000];
+            voice.Read(data, 0, data.Length);
+            return data.Skip(24000).Max(Math.Abs);
+        }
+        Check(Tail(true) < .6 * Tail(false));
+    }),
     ("Route buffer bounds latency, counts drops and fills underflow with silence", () =>
     {
         var buffer = new RouteBuffer(WaveFormat.CreateIeeeFloatWaveFormat(1000, 1), 40);

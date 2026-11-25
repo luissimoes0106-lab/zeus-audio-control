@@ -8,6 +8,8 @@
   <ItemGroup>
     <Compile Include="../../src/ZeusAudioControl/AudioProcessing.cs" Link="AudioProcessing.cs" />
     <Compile Include="../../src/ZeusAudioControl/ProfileFile.cs" Link="ProfileFile.cs" />
+    <Compile Include="../../src/ZeusAudioControl/RouteSafety.cs" Link="RouteSafety.cs" />
+    <Compile Include="../../src/ZeusAudioControl/UpdateFiles.cs" Link="UpdateFiles.cs" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
   </ItemGroup>
 </Project>
